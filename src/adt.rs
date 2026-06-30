@@ -35,8 +35,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
     let AdtType { name, type_list } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
-    let mut to_enum = TokenStream::new();
-    let mut to_element = TokenStream::new();
+    let mut from_impls = TokenStream::new();
 
     for x in type_list {
         let enum_type = format_ident!("{}_", x);
@@ -46,18 +45,14 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
             #enum_type(#x),
         };
 
-        to_enum = quote! {
-            #to_enum
+        from_impls = quote! {
+            #from_impls
 
             impl From<#x> for #name {
                 fn from(v: #x) -> Self {
                     Self::#enum_type(v)
                 }
             }
-        };
-
-        to_element = quote! {
-            #to_element
 
             impl TryFrom<#name> for #x {
                 type Error = ();
@@ -79,8 +74,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
             #elements
         }
 
-        #to_enum
-        #to_element
+        #from_impls
     })
 }
 
@@ -155,12 +149,6 @@ mod tests {
                         }
                     }
 
-                    impl From<Elem2> for Data {
-                        fn from(v: Elem2) -> Self {
-                            Self::Elem2_(v)
-                        }
-                    }
-
                     impl TryFrom<Data> for Elem1 {
                         type Error = ();
 
@@ -170,6 +158,12 @@ mod tests {
                             } else {
                                 Err(())
                             }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
                         }
                     }
 
