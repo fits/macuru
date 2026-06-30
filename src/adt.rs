@@ -36,6 +36,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
 
     let mut elements = TokenStream::new();
     let mut to_enum = TokenStream::new();
+    let mut to_element = TokenStream::new();
 
     for x in type_list {
         let enum_type = format_ident!("{}_", x);
@@ -54,6 +55,22 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
                 }
             }
         };
+
+        to_element = quote! {
+            #to_element
+
+            impl TryFrom<#name> for #x {
+                type Error = ();
+
+                fn try_from(v: #name) -> Result<Self, Self::Error> {
+                    if let #name::#enum_type(x) = v {
+                        Ok(x)
+                    } else {
+                        Err(())
+                    }
+                }
+            }
+        };
     }
 
     Ok(quote! {
@@ -63,6 +80,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
         }
 
         #to_enum
+        #to_element
     })
 }
 
@@ -140,6 +158,30 @@ mod tests {
                     impl From<Elem2> for Data {
                         fn from(v: Elem2) -> Self {
                             Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
                         }
                     }
                 }

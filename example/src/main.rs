@@ -30,4 +30,9 @@ fn main() {
     }
     .into();
     println!("{:?}", d4);
+
+    println!("Elem1 to Elem1 = {:?}", Elem1::try_from(d3.clone()));
+    println!("Elem1 to Elem2 = {:?}", Elem2::try_from(d3.clone()));
+    println!("Elem2 to Elem1 = {:?}", Elem1::try_from(d4.clone()));
+    println!("Elem2 to Elem2 = {:?}", Elem2::try_from(d4.clone()));
 }
