@@ -34,20 +34,35 @@ impl Parse for AdtType {
 pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
     let AdtType { name, type_list } = syn::parse2::<AdtType>(input)?;
 
-    let elements = type_list.iter().fold(TokenStream::new(), |acc, x| {
+    let mut elements = TokenStream::new();
+    let mut to_enum = TokenStream::new();
+
+    for x in type_list {
         let enum_type = format_ident!("{}_", x);
 
-        quote! {
-            #acc
+        elements = quote! {
+            #elements
             #enum_type(#x),
-        }
-    });
+        };
+
+        to_enum = quote! {
+            #to_enum
+
+            impl From<#x> for #name {
+                fn from(v: #x) -> Self {
+                    Self::#enum_type(v)
+                }
+            }
+        };
+    }
 
     Ok(quote! {
         #[derive(Clone, Debug)]
         pub enum #name {
             #elements
         }
+
+        #to_enum
     })
 }
 
@@ -114,6 +129,18 @@ mod tests {
                     pub enum Data {
                         Elem1_(Elem1),
                         Elem2_(Elem2),
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
                     }
                 }
                 .to_string(),

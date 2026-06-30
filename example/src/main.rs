@@ -15,6 +15,19 @@ fn main() {
     let d1 = Data::Elem1_(Elem1(12));
     println!("{:?}", d1);
 
-    let d2 = Data::Elem2_(Elem2 { name: "abc".into(), value: 34 });
+    let d2 = Data::Elem2_(Elem2 {
+        name: "abc".into(),
+        value: 34,
+    });
     println!("{:?}", d2);
+
+    let d3: Data = Elem1(5).into();
+    println!("{:?}", d3);
+
+    let d4: Data = Elem2 {
+        name: "def".into(),
+        value: 7,
+    }
+    .into();
+    println!("{:?}", d4);
 }
