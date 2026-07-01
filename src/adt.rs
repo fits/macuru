@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{ToTokens, format_ident, quote};
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{Error, Ident, Token, TraitItemFn, braced};
 
@@ -9,6 +9,17 @@ struct AdtType {
     name: Ident,
     type_list: Vec<Ident>,
     func_list: Vec<TraitItemFn>,
+}
+
+impl AdtType {
+    fn check_receiver(funcs: &Vec<TraitItemFn>) -> bool {
+        funcs.iter().all(|f| {
+            f.sig
+                .receiver()
+                .filter(|&x| x.reference.is_some() && x.mutability.is_none())
+                .is_some()
+        })
+    }
 }
 
 impl Parse for AdtType {
@@ -39,25 +50,21 @@ impl Parse for AdtType {
             type_list.push(input.parse::<Ident>()?);
         }
 
-        for f in &func_list {
-            let ref_self_rec = f
-                .sig
-                .receiver()
-                .filter(|&x| x.reference.is_some() && x.mutability.is_none());
-
-            if ref_self_rec.is_none() {
-                return Err(Error::new(input.span(), "receiver is only '&self'"));
+        if Self::check_receiver(&func_list) {
+            if type_list.len() >= 2 {
+                Ok(Self {
+                    name,
+                    type_list,
+                    func_list,
+                })
+            } else {
+                Err(Error::new(input.span(), "must 2 data types or more"))
             }
-        }
-
-        if type_list.len() >= 2 {
-            Ok(Self {
-                name,
-                type_list,
-                func_list,
-            })
         } else {
-            Err(Error::new(input.span(), "must 2 data types or more"))
+            Err(Error::new(
+                input.span(),
+                "invalid receiver. support only '&self'",
+            ))
         }
     }
 }
@@ -114,6 +121,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quote::ToTokens;
 
     #[test]
     fn single_type() {
@@ -214,6 +222,19 @@ mod tests {
         } else {
             assert!(false, "parse error");
         }
+    }
+
+    #[test]
+    fn single_type_with_func() {
+        let input = quote! {
+            Data = Data1 with {
+                fn func1(&self) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
     }
 
     #[test]
