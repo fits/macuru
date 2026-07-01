@@ -1,12 +1,14 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{Error, Ident, Token};
+use syn::{Error, Ident, Token, TraitItemFn, braced};
 
-#[derive(Debug)]
+syn::custom_keyword!(with);
+
 struct AdtType {
     name: Ident,
     type_list: Vec<Ident>,
+    func_list: Vec<TraitItemFn>,
 }
 
 impl Parse for AdtType {
@@ -15,16 +17,45 @@ impl Parse for AdtType {
         input.parse::<Token![=]>()?;
 
         let mut type_list: Vec<Ident> = vec![];
+        let mut func_list: Vec<TraitItemFn> = vec![];
 
         type_list.push(input.parse::<Ident>()?);
 
         while !input.is_empty() {
+            if input.peek(with) {
+                input.parse::<with>()?;
+
+                let body;
+                braced!(body in input);
+
+                while !body.is_empty() {
+                    func_list.push(body.parse::<TraitItemFn>()?);
+                }
+
+                break;
+            }
+
             input.parse::<Token![|]>()?;
             type_list.push(input.parse::<Ident>()?);
         }
 
+        for f in &func_list {
+            let ref_self_rec = f
+                .sig
+                .receiver()
+                .filter(|&x| x.to_token_stream().to_string() == "& self");
+
+            if ref_self_rec.is_none() {
+                return Err(Error::new(input.span(), "receiver is only '&self'"));
+            }
+        }
+
         if type_list.len() >= 2 {
-            Ok(Self { name, type_list })
+            Ok(Self {
+                name,
+                type_list,
+                func_list,
+            })
         } else {
             Err(Error::new(input.span(), "must 2 data types or more"))
         }
@@ -32,7 +63,9 @@ impl Parse for AdtType {
 }
 
 pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
-    let AdtType { name, type_list } = syn::parse2::<AdtType>(input)?;
+    let AdtType {
+        name, type_list, ..
+    } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
     let mut from_impls = TokenStream::new();
@@ -92,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn two_type() {
+    fn two_types() {
         let input = quote! { Data = Data1 | Data2 };
 
         let r = syn::parse2::<AdtType>(input);
@@ -103,18 +136,18 @@ mod tests {
 
             assert_eq!("Data1", a.type_list.get(0).unwrap().to_string());
             assert_eq!("Data2", a.type_list.get(1).unwrap().to_string());
+
+            assert_eq!(0, a.func_list.len());
         } else {
             assert!(false, "parse error");
         }
     }
 
     #[test]
-    fn many_type() {
+    fn many_types() {
         let input = quote! { Data = Data1 | Data2 | Data3 | Data4 };
 
         let r = syn::parse2::<AdtType>(input);
-
-        println!("{:?}", r);
 
         assert!(r.is_ok());
     }
@@ -126,6 +159,122 @@ mod tests {
 
         let r2 = syn::parse2::<AdtType>(quote! { Data = Data1 | Data2 | });
         assert!(r2.is_err());
+    }
+
+    #[test]
+    fn with_single_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.type_list.len());
+
+            assert_eq!(1, a.func_list.len());
+
+            assert_eq!(
+                quote! { fn func1(&self, p: isize) -> String; }.to_string(),
+                a.func_list.get(0).unwrap().to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn with_two_funcs() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+                fn func2(&self, s: String, b: bool) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.type_list.len());
+
+            assert_eq!(2, a.func_list.len());
+
+            assert_eq!(
+                quote! { fn func1(&self, p: isize) -> String; }.to_string(),
+                a.func_list.get(0).unwrap().to_token_stream().to_string()
+            );
+            assert_eq!(
+                quote! { fn func2(&self, s: String, b: bool) -> Self; }.to_string(),
+                a.func_list.get(1).unwrap().to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn with_empty_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.type_list.len());
+
+            assert_eq!(0, a.func_list.len());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn with_include_noself_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+                fn func2(s: String) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn with_include_mut_self_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+                fn func2(&mut self) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn with_include_owned_self_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+                fn func2(self, a: String, b: bool) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
     }
 
     #[test]
