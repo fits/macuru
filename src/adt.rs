@@ -1,7 +1,9 @@
+use std::ops::Not;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{Error, Ident, Token, TraitItemFn, braced};
+use syn::{Error, FnArg, Ident, Token, TraitItemFn, braced};
 
 syn::custom_keyword!(with);
 
@@ -32,14 +34,14 @@ impl Parse for AdtType {
 
         type_list.push(input.parse::<Ident>()?);
 
-        while !input.is_empty() {
+        while input.is_empty().not() {
             if input.peek(with) {
                 input.parse::<with>()?;
 
                 let body;
                 braced!(body in input);
 
-                while !body.is_empty() {
+                while body.is_empty().not() {
                     func_list.push(body.parse::<TraitItemFn>()?);
                 }
 
@@ -71,13 +73,15 @@ impl Parse for AdtType {
 
 pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
-        name, type_list, ..
+        name,
+        type_list,
+        func_list,
     } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    for x in type_list {
+    for x in &type_list {
         let enum_type = format_ident!("{}_", x);
 
         elements = quote! {
@@ -108,12 +112,73 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
+    let mut trait_def = TokenStream::new();
+
+    if func_list.is_empty().not() {
+        let trait_name = format_ident!("{}Impl", name);
+
+        let mut trait_func = TokenStream::new();
+        let mut trait_impl = TokenStream::new();
+
+        for f in func_list {
+            trait_func = quote! {
+                #trait_func
+                #f
+            };
+
+            let func_sig = f.sig;
+            let func_name = &func_sig.ident;
+
+            let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
+                if let FnArg::Typed(t) = x {
+                    let v = &t.pat;
+
+                    quote! {
+                        #acc, #v
+                    }
+                } else {
+                    acc
+                }
+            });
+
+            let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
+                let enum_type = format_ident!("{}_", x);
+
+                quote! {
+                    #acc
+                    Self::#enum_type(x) => #trait_name::#func_name(#func_args),
+                }
+            });
+
+            trait_impl = quote! {
+                #trait_impl
+
+                #func_sig {
+                    match self {
+                        #func_body
+                    }
+                }
+            }
+        }
+
+        trait_def = quote! {
+            pub trait #trait_name {
+                #trait_func
+            }
+
+            impl #trait_name for #name {
+                #trait_impl
+            }
+        };
+    }
+
     Ok(quote! {
         #[derive(Clone, Debug)]
         pub enum #name {
             #elements
         }
 
+        #trait_def
         #from_impls
     })
 }
@@ -354,6 +419,167 @@ mod tests {
             );
         } else {
             assert!(false, "failed adt_proc")
+        }
+    }
+
+    #[test]
+    fn adt_proc_with_void_func() {
+        let input = quote! {
+            Data = Elem1 | Elem2 with {
+                fn func1(&self, a: isize, b: String);
+            }
+        };
+
+        let r = adt_proc(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Clone, Debug)]
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataImpl {
+                        fn func1(&self, a: isize, b: String);
+                    }
+
+                    impl DataImpl for Data {
+                        fn func1(&self, a: isize, b: String) {
+                            match self {
+                                Self::Elem1_(x) => DataImpl::func1(x, a, b),
+                                Self::Elem2_(x) => DataImpl::func1(x, a, b),
+                            }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_proc_with_multi_funcs() {
+        let input = quote! {
+            Data = Elem1 | Elem2 with {
+                fn func1(&self);
+                fn func2(&self, a: isize) -> bool;
+            }
+        };
+
+        let r = adt_proc(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Clone, Debug)]
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataImpl {
+                        fn func1(&self);
+                        fn func2(&self, a: isize) -> bool;
+                    }
+
+                    impl DataImpl for Data {
+                        fn func1(&self) {
+                            match self {
+                                Self::Elem1_(x) => DataImpl::func1(x),
+                                Self::Elem2_(x) => DataImpl::func1(x),
+                            }
+                        }
+
+                        fn func2(&self, a: isize) -> bool {
+                            match self {
+                                Self::Elem1_(x) => DataImpl::func2(x, a),
+                                Self::Elem2_(x) => DataImpl::func2(x, a),
+                            }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
         }
     }
 }
