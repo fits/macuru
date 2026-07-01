@@ -43,7 +43,7 @@ impl Parse for AdtType {
             let ref_self_rec = f
                 .sig
                 .receiver()
-                .filter(|&x| x.to_token_stream().to_string() == "& self");
+                .filter(|&x| x.reference.is_some() && x.mutability.is_none());
 
             if ref_self_rec.is_none() {
                 return Err(Error::new(input.span(), "receiver is only '&self'"));
