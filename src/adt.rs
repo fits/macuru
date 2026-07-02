@@ -92,7 +92,7 @@ impl Parse for AdtType {
     }
 }
 
-pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
+pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
         type_list,
@@ -103,11 +103,11 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
     let mut from_impls = TokenStream::new();
 
     for x in &type_list {
-        let enum_type = format_ident!("{}_", x);
+        let enum_element = to_element_name(x);
 
         elements = quote! {
             #elements
-            #enum_type(#x),
+            #enum_element(#x),
         };
 
         from_impls = quote! {
@@ -115,7 +115,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
 
             impl From<#x> for #name {
                 fn from(v: #x) -> Self {
-                    Self::#enum_type(v)
+                    Self::#enum_element(v)
                 }
             }
 
@@ -123,7 +123,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
                 type Error = ();
 
                 fn try_from(v: #name) -> Result<Self, Self::Error> {
-                    if let #name::#enum_type(x) = v {
+                    if let #name::#enum_element(x) = v {
                         Ok(x)
                     } else {
                         Err(())
@@ -133,65 +133,9 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
-    let mut trait_gen = TokenStream::new();
-
-    if let Some(tr) = trait_def {
-        let trait_name = tr.name;
-
-        let mut trait_func = TokenStream::new();
-        let mut trait_impl = TokenStream::new();
-
-        for f in tr.func_list {
-            trait_func = quote! {
-                #trait_func
-                #f
-            };
-
-            let func_sig = f.sig;
-            let func_name = &func_sig.ident;
-
-            let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
-                if let FnArg::Typed(t) = x {
-                    let v = &t.pat;
-
-                    quote! {
-                        #acc, #v
-                    }
-                } else {
-                    acc
-                }
-            });
-
-            let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
-                let enum_type = format_ident!("{}_", x);
-
-                quote! {
-                    #acc
-                    Self::#enum_type(x) => #trait_name::#func_name(#func_args),
-                }
-            });
-
-            trait_impl = quote! {
-                #trait_impl
-
-                #func_sig {
-                    match self {
-                        #func_body
-                    }
-                }
-            }
-        }
-
-        trait_gen = quote! {
-            pub trait #trait_name {
-                #trait_func
-            }
-
-            impl #trait_name for #name {
-                #trait_impl
-            }
-        };
-    }
+    let trait_gen = trait_def
+        .map(|x| adt_trait_generate(&name, &type_list, x))
+        .unwrap_or_default();
 
     Ok(quote! {
         #[derive(Clone, Debug)]
@@ -202,6 +146,68 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
         #trait_gen
         #from_impls
     })
+}
+
+fn to_element_name(inner_type: &Ident) -> Ident {
+    format_ident!("{}_", inner_type)
+}
+
+fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
+    let trait_name = att.name;
+
+    let mut trait_func = TokenStream::new();
+    let mut trait_impl = TokenStream::new();
+
+    for f in att.func_list {
+        trait_func = quote! {
+            #trait_func
+            #f
+        };
+
+        let func_sig = f.sig;
+        let func_name = &func_sig.ident;
+
+        let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
+            if let FnArg::Typed(t) = x {
+                let v = &t.pat;
+
+                quote! {
+                    #acc, #v
+                }
+            } else {
+                acc
+            }
+        });
+
+        let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
+            let enum_element = to_element_name(x);
+
+            quote! {
+                #acc
+                Self::#enum_element(x) => #trait_name::#func_name(#func_args),
+            }
+        });
+
+        trait_impl = quote! {
+            #trait_impl
+
+            #func_sig {
+                match self {
+                    #func_body
+                }
+            }
+        }
+    }
+
+    quote! {
+        pub trait #trait_name {
+            #trait_func
+        }
+
+        impl #trait_name for #name {
+            #trait_impl
+        }
+    }
 }
 
 #[cfg(test)]
@@ -409,10 +415,10 @@ mod tests {
     }
 
     #[test]
-    fn adt_proc_with_two_types() {
+    fn adt_generate_with_two_types() {
         let input = quote! { Data = Elem1 | Elem2 };
 
-        let r = adt_proc(input);
+        let r = adt_generate(input);
 
         if let Ok(t) = r {
             assert_eq!(
@@ -468,14 +474,14 @@ mod tests {
     }
 
     #[test]
-    fn adt_proc_with_void_func() {
+    fn adt_generate_with_void_func() {
         let input = quote! {
             Data = Elem1 | Elem2 with DataImpl {
                 fn func1(&self, a: isize, b: String);
             }
         };
 
-        let r = adt_proc(input);
+        let r = adt_generate(input);
 
         if let Ok(t) = r {
             assert_eq!(
@@ -544,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn adt_proc_with_multi_funcs() {
+    fn adt_generate_with_multi_funcs() {
         let input = quote! {
             Data = Elem1 | Elem2 with DataFunc {
                 fn func1(&self);
@@ -552,7 +558,7 @@ mod tests {
             }
         };
 
-        let r = adt_proc(input);
+        let r = adt_generate(input);
 
         if let Ok(t) = r {
             assert_eq!(
