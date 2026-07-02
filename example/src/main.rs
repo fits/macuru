@@ -12,7 +12,7 @@ pub struct Elem2 {
 }
 
 adt!(
-    Item = A | B with {
+    Item = A | B with ItemImpl {
         fn show(&self) -> String;
         fn print(&self, prefix: &str, value: i32, flag: bool);
     }

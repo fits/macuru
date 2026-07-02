@@ -10,10 +10,15 @@ syn::custom_keyword!(with);
 struct AdtType {
     name: Ident,
     type_list: Vec<Ident>,
+    trait_def: Option<AdtTraitType>,
+}
+
+struct AdtTraitType {
+    name: Ident,
     func_list: Vec<TraitItemFn>,
 }
 
-impl AdtType {
+impl AdtTraitType {
     fn check_receiver(funcs: &Vec<TraitItemFn>) -> bool {
         funcs.iter().all(|f| {
             f.sig
@@ -24,44 +29,21 @@ impl AdtType {
     }
 }
 
-impl Parse for AdtType {
+impl Parse for AdtTraitType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
-        input.parse::<Token![=]>()?;
 
-        let mut type_list: Vec<Ident> = vec![];
+        let body;
+        braced!(body in input);
+
         let mut func_list: Vec<TraitItemFn> = vec![];
 
-        type_list.push(input.parse::<Ident>()?);
-
-        while input.is_empty().not() {
-            if input.peek(with) {
-                input.parse::<with>()?;
-
-                let body;
-                braced!(body in input);
-
-                while body.is_empty().not() {
-                    func_list.push(body.parse::<TraitItemFn>()?);
-                }
-
-                break;
-            }
-
-            input.parse::<Token![|]>()?;
-            type_list.push(input.parse::<Ident>()?);
+        while body.is_empty().not() {
+            func_list.push(body.parse::<TraitItemFn>()?);
         }
 
         if Self::check_receiver(&func_list) {
-            if type_list.len() >= 2 {
-                Ok(Self {
-                    name,
-                    type_list,
-                    func_list,
-                })
-            } else {
-                Err(Error::new(input.span(), "must 2 data types or more"))
-            }
+            Ok(AdtTraitType { name, func_list })
         } else {
             Err(Error::new(
                 input.span(),
@@ -71,11 +53,50 @@ impl Parse for AdtType {
     }
 }
 
+impl Parse for AdtType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let name = input.parse::<Ident>()?;
+        input.parse::<Token![=]>()?;
+
+        let mut type_list: Vec<Ident> = vec![];
+        let mut trait_def = None;
+
+        type_list.push(input.parse::<Ident>()?);
+
+        while input.is_empty().not() {
+            if input.peek(with) {
+                input.parse::<with>()?;
+
+                let att = AdtTraitType::parse(input)?;
+
+                if att.func_list.is_empty().not() {
+                    trait_def = Some(att);
+                }
+
+                break;
+            }
+
+            input.parse::<Token![|]>()?;
+            type_list.push(input.parse::<Ident>()?);
+        }
+
+        if type_list.len() >= 2 {
+            Ok(Self {
+                name,
+                type_list,
+                trait_def,
+            })
+        } else {
+            Err(Error::new(input.span(), "must 2 data types or more"))
+        }
+    }
+}
+
 pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
         type_list,
-        func_list,
+        trait_def,
     } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
@@ -112,15 +133,15 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
-    let mut trait_def = TokenStream::new();
+    let mut trait_gen = TokenStream::new();
 
-    if func_list.is_empty().not() {
-        let trait_name = format_ident!("{}Impl", name);
+    if let Some(tr) = trait_def {
+        let trait_name = tr.name;
 
         let mut trait_func = TokenStream::new();
         let mut trait_impl = TokenStream::new();
 
-        for f in func_list {
+        for f in tr.func_list {
             trait_func = quote! {
                 #trait_func
                 #f
@@ -161,7 +182,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
             }
         }
 
-        trait_def = quote! {
+        trait_gen = quote! {
             pub trait #trait_name {
                 #trait_func
             }
@@ -178,7 +199,7 @@ pub fn adt_proc(input: TokenStream) -> Result<TokenStream> {
             #elements
         }
 
-        #trait_def
+        #trait_gen
         #from_impls
     })
 }
@@ -210,7 +231,7 @@ mod tests {
             assert_eq!("Data1", a.type_list.get(0).unwrap().to_string());
             assert_eq!("Data2", a.type_list.get(1).unwrap().to_string());
 
-            assert_eq!(0, a.func_list.len());
+            assert!(a.trait_def.is_none());
         } else {
             assert!(false, "parse error");
         }
@@ -235,9 +256,22 @@ mod tests {
     }
 
     #[test]
-    fn with_single_func() {
+    fn with_single_func_no_trait_name() {
         let input = quote! {
             Data = Data1 | Data2 with {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn with_single_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with DataImpl {
                 fn func1(&self, p: isize) -> String;
             }
         };
@@ -248,11 +282,17 @@ mod tests {
             assert_eq!("Data", a.name.to_string());
             assert_eq!(2, a.type_list.len());
 
-            assert_eq!(1, a.func_list.len());
+            assert!(a.trait_def.is_some());
+
+            let tr = a.trait_def.unwrap();
+
+            assert_eq!("DataImpl", tr.name.to_string());
+
+            assert_eq!(1, tr.func_list.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                a.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.func_list.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -262,7 +302,7 @@ mod tests {
     #[test]
     fn with_two_funcs() {
         let input = quote! {
-            Data = Data1 | Data2 with {
+            Data = Data1 | Data2 with DataFunc {
                 fn func1(&self, p: isize) -> String;
                 fn func2(&self, s: String, b: bool) -> Self;
             }
@@ -274,15 +314,20 @@ mod tests {
             assert_eq!("Data", a.name.to_string());
             assert_eq!(2, a.type_list.len());
 
-            assert_eq!(2, a.func_list.len());
+            assert!(a.trait_def.is_some());
+
+            let tr = a.trait_def.unwrap();
+
+            assert_eq!("DataFunc", tr.name.to_string());
+            assert_eq!(2, tr.func_list.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                a.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.func_list.get(0).unwrap().to_token_stream().to_string()
             );
             assert_eq!(
                 quote! { fn func2(&self, s: String, b: bool) -> Self; }.to_string(),
-                a.func_list.get(1).unwrap().to_token_stream().to_string()
+                tr.func_list.get(1).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -292,7 +337,7 @@ mod tests {
     #[test]
     fn single_type_with_func() {
         let input = quote! {
-            Data = Data1 with {
+            Data = Data1 with DataImpl {
                 fn func1(&self) -> Self;
             }
         };
@@ -305,7 +350,7 @@ mod tests {
     #[test]
     fn with_empty_func() {
         let input = quote! {
-            Data = Data1 | Data2 with {
+            Data = Data1 | Data2 with DataImpl {
             }
         };
 
@@ -315,7 +360,7 @@ mod tests {
             assert_eq!("Data", a.name.to_string());
             assert_eq!(2, a.type_list.len());
 
-            assert_eq!(0, a.func_list.len());
+            assert!(a.trait_def.is_none());
         } else {
             assert!(false, "parse error");
         }
@@ -324,7 +369,7 @@ mod tests {
     #[test]
     fn with_include_noself_func() {
         let input = quote! {
-            Data = Data1 | Data2 with {
+            Data = Data1 | Data2 with DataFunc {
                 fn func1(&self, p: isize) -> String;
                 fn func2(s: String) -> Self;
             }
@@ -338,7 +383,7 @@ mod tests {
     #[test]
     fn with_include_mut_self_func() {
         let input = quote! {
-            Data = Data1 | Data2 with {
+            Data = Data1 | Data2 with DataImpl {
                 fn func1(&self, p: isize) -> String;
                 fn func2(&mut self) -> Self;
             }
@@ -352,7 +397,7 @@ mod tests {
     #[test]
     fn with_include_owned_self_func() {
         let input = quote! {
-            Data = Data1 | Data2 with {
+            Data = Data1 | Data2 with DataImpl {
                 fn func1(&self, p: isize) -> String;
                 fn func2(self, a: String, b: bool) -> Self;
             }
@@ -425,7 +470,7 @@ mod tests {
     #[test]
     fn adt_proc_with_void_func() {
         let input = quote! {
-            Data = Elem1 | Elem2 with {
+            Data = Elem1 | Elem2 with DataImpl {
                 fn func1(&self, a: isize, b: String);
             }
         };
@@ -501,7 +546,7 @@ mod tests {
     #[test]
     fn adt_proc_with_multi_funcs() {
         let input = quote! {
-            Data = Elem1 | Elem2 with {
+            Data = Elem1 | Elem2 with DataFunc {
                 fn func1(&self);
                 fn func2(&self, a: isize) -> bool;
             }
@@ -518,23 +563,23 @@ mod tests {
                         Elem2_(Elem2),
                     }
 
-                    pub trait DataImpl {
+                    pub trait DataFunc {
                         fn func1(&self);
                         fn func2(&self, a: isize) -> bool;
                     }
 
-                    impl DataImpl for Data {
+                    impl DataFunc for Data {
                         fn func1(&self) {
                             match self {
-                                Self::Elem1_(x) => DataImpl::func1(x),
-                                Self::Elem2_(x) => DataImpl::func1(x),
+                                Self::Elem1_(x) => DataFunc::func1(x),
+                                Self::Elem2_(x) => DataFunc::func1(x),
                             }
                         }
 
                         fn func2(&self, a: isize) -> bool {
                             match self {
-                                Self::Elem1_(x) => DataImpl::func2(x, a),
-                                Self::Elem2_(x) => DataImpl::func2(x, a),
+                                Self::Elem1_(x) => DataFunc::func2(x, a),
+                                Self::Elem2_(x) => DataFunc::func2(x, a),
                             }
                         }
                     }
