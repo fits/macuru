@@ -217,7 +217,7 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
             let mut expr = quote! { #trait_name::#func_name(#func_args) };
 
             if ret_self {
-                expr = quote! { Self::to_adt(#expr) };
+                expr = quote! { Self::convert(#expr) };
             }
 
             quote! {
@@ -251,12 +251,12 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 }
 
 fn converter_impl_generate(name: &Ident) -> TokenStream {
-    let conv_name = format_ident!("{}ElementToAdt", name);
+    let conv_name = format_ident!("{}SelfConvert_", name);
 
     quote! {
         trait #conv_name<T> {
             type Item;
-            fn to_adt(v: T) -> Self::Item;
+            fn convert(v: T) -> Self::Item;
         }
 
         impl<T> #conv_name<T> for #name
@@ -265,7 +265,7 @@ fn converter_impl_generate(name: &Ident) -> TokenStream {
         {
             type Item = Self;
 
-            fn to_adt(v: T) -> Self::Item {
+            fn convert(v: T) -> Self::Item {
                 v.into()
             }
         }
@@ -783,31 +783,31 @@ mod tests {
 
                         fn func2(&self, a: isize) -> Self {
                             match self {
-                                Self::Elem1_(x) => Self::to_adt(DataFunc::func2(x, a)),
-                                Self::Elem2_(x) => Self::to_adt(DataFunc::func2(x, a)),
+                                Self::Elem1_(x) => Self::convert(DataFunc::func2(x, a)),
+                                Self::Elem2_(x) => Self::convert(DataFunc::func2(x, a)),
                             }
                         }
 
                         fn func3(&self, a: String, b: bool) -> Self {
                             match self {
-                                Self::Elem1_(x) => Self::to_adt(DataFunc::func3(x, a, b)),
-                                Self::Elem2_(x) => Self::to_adt(DataFunc::func3(x, a, b)),
+                                Self::Elem1_(x) => Self::convert(DataFunc::func3(x, a, b)),
+                                Self::Elem2_(x) => Self::convert(DataFunc::func3(x, a, b)),
                             }
                         }
                     }
 
-                    trait DataElementToAdt<T> {
+                    trait DataSelfConvert_<T> {
                         type Item;
-                        fn to_adt(v: T) -> Self::Item;
+                        fn convert(v: T) -> Self::Item;
                     }
 
-                    impl<T> DataElementToAdt<T> for Data
+                    impl<T> DataSelfConvert_<T> for Data
                     where
                         T: Into<Self>,
                     {
                         type Item = Self;
 
-                        fn to_adt(v: T) -> Self::Item {
+                        fn convert(v: T) -> Self::Item {
                             v.into()
                         }
                     }
