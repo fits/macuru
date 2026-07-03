@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use frsums::adt;
 
 adt!(Data = Elem1 | Elem2);
@@ -15,6 +17,7 @@ adt!(
     Item = A | B with ItemImpl {
         fn show(&self) -> String;
         fn print(&self, prefix: &str, value: i32, flag: bool);
+        fn add(&self, value: isize) -> Self;
     }
 );
 
@@ -37,6 +40,10 @@ impl ItemImpl for A {
     fn print(&self, prefix: &str, value: i32, flag: bool) {
         println!("{prefix} {value} {flag}, {self:?}");
     }
+
+    fn add(&self, value: isize) -> Self {
+        self.clone()
+    }
 }
 
 impl ItemImpl for B {
@@ -46,6 +53,13 @@ impl ItemImpl for B {
 
     fn print(&self, prefix: &str, value: i32, flag: bool) {
         println!("{prefix} {value} {flag}, B(name={}, value={})", self.name, self.value);
+    }
+
+    fn add(&self, value: isize) -> Self {
+        Self {
+            name: self.name.clone(),
+            value: self.value + value,
+        }
     }
 }
 
@@ -85,6 +99,7 @@ fn test_item() {
 
     println!("d1.show = {}", d1.show());
     d1.print("* test1", 12, true);
+    println!("d1 add: {:?}", d1.add(500));
 
     let d2: Item = B {
         name: "item-2".to_string(),
@@ -94,4 +109,5 @@ fn test_item() {
 
     println!("d2.show = {}", d2.show());
     d2.print("* test2", 345, false);
+    println!("d2 add: {:?}", d2.add(500));
 }

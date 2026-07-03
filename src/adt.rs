@@ -2,8 +2,9 @@ use std::ops::Not;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{Error, FnArg, Ident, Token, TraitItemFn, braced};
+use syn::{Error, FnArg, Ident, Signature, Token, TraitItemFn, braced};
 
 syn::custom_keyword!(with);
 
@@ -92,6 +93,22 @@ impl Parse for AdtType {
     }
 }
 
+#[derive(Default)]
+struct SelfChecker(bool);
+
+impl Fold for SelfChecker {
+    fn fold_path_segment(&mut self, i: syn::PathSegment) -> syn::PathSegment {
+        if self.0 {
+            i
+        } else if i.ident.to_string() == "Self" {
+            self.0 = true;
+            i
+        } else {
+            syn::fold::fold_path_segment(self, i)
+        }
+    }
+}
+
 pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
@@ -152,11 +169,20 @@ fn to_element_name(inner_type: &Ident) -> Ident {
     format_ident!("{}_", inner_type)
 }
 
+fn is_returned_self(sig: Signature) -> bool {
+    let mut checker = SelfChecker::default();
+
+    checker.fold_return_type(sig.output);
+
+    checker.0
+}
+
 fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
     let trait_name = att.name;
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
+    let mut convert_impl = TokenStream::new();
 
     for f in att.func_list {
         trait_func = quote! {
@@ -166,6 +192,12 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 
         let func_sig = f.sig;
         let func_name = &func_sig.ident;
+
+        let ret_self = is_returned_self(func_sig.clone());
+
+        if ret_self && convert_impl.is_empty() {
+            convert_impl = converter_impl_generate(name);
+        }
 
         let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
             if let FnArg::Typed(t) = x {
@@ -182,9 +214,15 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
         let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
             let enum_element = to_element_name(x);
 
+            let mut expr = quote! { #trait_name::#func_name(#func_args) };
+
+            if ret_self {
+                expr = quote! { Self::to_adt(#expr) };
+            }
+
             quote! {
                 #acc
-                Self::#enum_element(x) => #trait_name::#func_name(#func_args),
+                Self::#enum_element(x) => #expr,
             }
         });
 
@@ -207,6 +245,30 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
         impl #trait_name for #name {
             #trait_impl
         }
+
+        #convert_impl
+    }
+}
+
+fn converter_impl_generate(name: &Ident) -> TokenStream {
+    let conv_name = format_ident!("{}ElementToAdt", name);
+
+    quote! {
+        trait #conv_name<T> {
+            type Item;
+            fn to_adt(v: T) -> Self::Item;
+        }
+
+        impl<T> #conv_name<T> for #name
+        where
+            T: Into<Self>,
+        {
+            type Item = Self;
+
+            fn to_adt(v: T) -> Self::Item {
+                v.into()
+            }
+        }
     }
 }
 
@@ -214,6 +276,10 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 mod tests {
     use super::*;
     use quote::ToTokens;
+
+    fn parse_func(input: TokenStream) -> Signature {
+        syn::parse2(input).unwrap()
+    }
 
     #[test]
     fn single_type() {
@@ -415,6 +481,52 @@ mod tests {
     }
 
     #[test]
+    fn returned_no_self() {
+        assert_eq!(
+            false,
+            is_returned_self(parse_func(quote! { fn func1() -> bool }))
+        );
+        assert_eq!(
+            false,
+            is_returned_self(parse_func(quote! { fn func1() -> Option<(bool, String)> }))
+        );
+    }
+
+    #[test]
+    fn returned_only_self() {
+        assert!(is_returned_self(parse_func(quote! { fn func1() -> Self })));
+    }
+
+    #[test]
+    fn returned_tuple_in_self() {
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> (Self,) }
+        )));
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> (bool, Self, isize) }
+        )));
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> (bool, String, isize, Self) }
+        )));
+    }
+
+    #[test]
+    fn returned_type_in_self() {
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> Option<Self> }
+        )));
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> Result<Self, ()> }
+        )));
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> Option<(bool, String, isize, Self)> }
+        )));
+        assert!(is_returned_self(parse_func(
+            quote! { fn func1() -> Result<Option<(bool, String, isize, Self)>, ()> }
+        )));
+    }
+
+    #[test]
     fn adt_generate_with_two_types() {
         let input = quote! { Data = Elem1 | Elem2 };
 
@@ -587,6 +699,116 @@ mod tests {
                                 Self::Elem1_(x) => DataFunc::func2(x, a),
                                 Self::Elem2_(x) => DataFunc::func2(x, a),
                             }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_self_return_func() {
+        let input = quote! {
+            Data = Elem1 | Elem2 with DataFunc {
+                fn func1(&self);
+                fn func2(&self, a: isize) -> Self;
+                fn func3(&self, a: String, b: bool) -> Self;
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Clone, Debug)]
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataFunc {
+                        fn func1(&self);
+                        fn func2(&self, a: isize) -> Self;
+                        fn func3(&self, a: String, b: bool) -> Self;
+                    }
+
+                    impl DataFunc for Data {
+                        fn func1(&self) {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::func1(x),
+                                Self::Elem2_(x) => DataFunc::func1(x),
+                            }
+                        }
+
+                        fn func2(&self, a: isize) -> Self {
+                            match self {
+                                Self::Elem1_(x) => Self::to_adt(DataFunc::func2(x, a)),
+                                Self::Elem2_(x) => Self::to_adt(DataFunc::func2(x, a)),
+                            }
+                        }
+
+                        fn func3(&self, a: String, b: bool) -> Self {
+                            match self {
+                                Self::Elem1_(x) => Self::to_adt(DataFunc::func3(x, a, b)),
+                                Self::Elem2_(x) => Self::to_adt(DataFunc::func3(x, a, b)),
+                            }
+                        }
+                    }
+
+                    trait DataElementToAdt<T> {
+                        type Item;
+                        fn to_adt(v: T) -> Self::Item;
+                    }
+
+                    impl<T> DataElementToAdt<T> for Data
+                    where
+                        T: Into<Self>,
+                    {
+                        type Item = Self;
+
+                        fn to_adt(v: T) -> Self::Item {
+                            v.into()
                         }
                     }
 
