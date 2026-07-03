@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use frsums::adt;
+use std::fmt::Debug;
 
 adt!(Data = Elem1 | Elem2);
 
@@ -18,6 +19,7 @@ adt!(
         fn show(&self) -> String;
         fn print(&self, prefix: &str, value: i32, flag: bool);
         fn add(&self, value: isize) -> Self;
+        fn show2<T: Debug>(&self, v: T) -> String;
     }
 );
 
@@ -44,6 +46,10 @@ impl ItemImpl for A {
     fn add(&self, value: isize) -> Self {
         self.clone()
     }
+
+    fn show2<T: Debug>(&self, v: T) -> String {
+        format!("name={}, v={:?}", self.name, v)
+    }
 }
 
 impl ItemImpl for B {
@@ -60,6 +66,10 @@ impl ItemImpl for B {
             name: self.name.clone(),
             value: self.value + value,
         }
+    }
+
+    fn show2<T: Debug>(&self, v: T) -> String {
+        format!("name={}, value={}, v={:?}", self.name, self.value, v)
     }
 }
 
@@ -100,6 +110,7 @@ fn test_item() {
     println!("d1.show = {}", d1.show());
     d1.print("* test1", 12, true);
     println!("d1 add: {:?}", d1.add(500));
+    println!("d1.show2: {}", d1.show2((10, false)));
 
     let d2: Item = B {
         name: "item-2".to_string(),
@@ -110,4 +121,5 @@ fn test_item() {
     println!("d2.show = {}", d2.show());
     d2.print("* test2", 345, false);
     println!("d2 add: {:?}", d2.add(500));
+    println!("d2.show2: {}", d2.show2(true));
 }

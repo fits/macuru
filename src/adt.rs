@@ -341,6 +341,19 @@ mod tests {
     }
 
     #[test]
+    fn with_generics_trait() {
+        let input = quote! {
+            Data = Data1 | Data2 with DataFunc<T> {
+                fn func1(&self, p: T) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn with_single_func() {
         let input = quote! {
             Data = Data1 | Data2 with DataImpl {
@@ -364,6 +377,37 @@ mod tests {
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
+                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn with_generics_func() {
+        let input = quote! {
+            Data = Data1 | Data2 with DataImpl {
+                fn func1<T>(&self, p: T) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.type_list.len());
+
+            assert!(a.trait_def.is_some());
+
+            let tr = a.trait_def.unwrap();
+
+            assert_eq!("DataImpl", tr.name.to_string());
+
+            assert_eq!(1, tr.func_list.len());
+
+            assert_eq!(
+                quote! { fn func1<T>(&self, p: T) -> String; }.to_string(),
                 tr.func_list.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
