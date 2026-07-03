@@ -93,16 +93,14 @@ impl Parse for AdtType {
     }
 }
 
-#[derive(Default)]
-struct SelfChecker(bool);
+struct SelfTypeEditor(Ident);
 
-impl Fold for SelfChecker {
+impl Fold for SelfTypeEditor {
     fn fold_path_segment(&mut self, i: syn::PathSegment) -> syn::PathSegment {
-        if self.0 {
-            i
-        } else if i.ident.to_string() == "Self" {
-            self.0 = true;
-            i
+        if i.ident.to_string() == "Self" {
+            let mut res = i.clone();
+            res.ident = self.0.clone();
+            res
         } else {
             syn::fold::fold_path_segment(self, i)
         }
@@ -169,12 +167,14 @@ fn to_element_name(inner_type: &Ident) -> Ident {
     format_ident!("{}_", inner_type)
 }
 
-fn is_returned_self(sig: Signature) -> bool {
-    let mut checker = SelfChecker::default();
+fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
+    let mut res = sig.clone();
 
-    checker.fold_return_type(sig.output);
+    let mut editor = SelfTypeEditor(replace_name.clone());
 
-    checker.0
+    res.output = editor.fold_return_type(res.output);
+
+    res
 }
 
 fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
@@ -182,9 +182,11 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
-    let mut convert_impl = TokenStream::new();
 
     for f in att.func_list {
+        let mut f = f.clone();
+        f.sig = edit_self_return_type(&f.sig, name);
+
         trait_func = quote! {
             #trait_func
             #f
@@ -192,12 +194,6 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 
         let func_sig = f.sig;
         let func_name = &func_sig.ident;
-
-        let ret_self = is_returned_self(func_sig.clone());
-
-        if ret_self && convert_impl.is_empty() {
-            convert_impl = converter_impl_generate(name);
-        }
 
         let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
             if let FnArg::Typed(t) = x {
@@ -214,15 +210,9 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
         let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
             let enum_element = to_element_name(x);
 
-            let mut expr = quote! { #trait_name::#func_name(#func_args) };
-
-            if ret_self {
-                expr = quote! { Self::convert(#expr) };
-            }
-
             quote! {
                 #acc
-                Self::#enum_element(x) => #expr,
+                Self::#enum_element(x) => #trait_name::#func_name(#func_args),
             }
         });
 
@@ -244,30 +234,6 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
 
         impl #trait_name for #name {
             #trait_impl
-        }
-
-        #convert_impl
-    }
-}
-
-fn converter_impl_generate(name: &Ident) -> TokenStream {
-    let conv_name = format_ident!("{}SelfConvert_", name);
-
-    quote! {
-        trait #conv_name<T> {
-            type Item;
-            fn convert(v: T) -> Self::Item;
-        }
-
-        impl<T> #conv_name<T> for #name
-        where
-            T: Into<Self>,
-        {
-            type Item = Self;
-
-            fn convert(v: T) -> Self::Item {
-                v.into()
-            }
         }
     }
 }
@@ -525,49 +491,86 @@ mod tests {
     }
 
     #[test]
-    fn returned_no_self() {
+    fn return_type_with_no_self() {
+        let name = format_ident!("TEST");
+
+        let f1 = parse_func(quote! { fn func1() -> bool });
+
         assert_eq!(
-            false,
-            is_returned_self(parse_func(quote! { fn func1() -> bool }))
+            quote! { fn func1() -> bool }.to_string(),
+            edit_self_return_type(&f1, &name)
+                .to_token_stream()
+                .to_string()
         );
+
+        let f2 = parse_func(quote! { fn func1() -> Option<(bool, String, i32)> });
+
         assert_eq!(
-            false,
-            is_returned_self(parse_func(quote! { fn func1() -> Option<(bool, String)> }))
+            quote! { fn func1() -> Option<(bool, String, i32)> }.to_string(),
+            edit_self_return_type(&f2, &name)
+                .to_token_stream()
+                .to_string()
         );
     }
 
     #[test]
-    fn returned_only_self() {
-        assert!(is_returned_self(parse_func(quote! { fn func1() -> Self })));
+    fn return_type_with_only_self() {
+        let name = format_ident!("TEST");
+
+        let f1 = parse_func(quote! { fn func1() -> Self });
+
+        assert_eq!(
+            quote! { fn func1() -> TEST }.to_string(),
+            edit_self_return_type(&f1, &name)
+                .to_token_stream()
+                .to_string()
+        );
     }
 
     #[test]
-    fn returned_tuple_in_self() {
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> (Self,) }
-        )));
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> (bool, Self, isize) }
-        )));
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> (bool, String, isize, Self) }
-        )));
+    fn return_type_with_tuple_in_self() {
+        let name = format_ident!("TEST");
+
+        let f1 = parse_func(quote! { fn func1() -> (Self,) });
+
+        assert_eq!(
+            quote! { fn func1() -> (TEST,) }.to_string(),
+            edit_self_return_type(&f1, &name)
+                .to_token_stream()
+                .to_string()
+        );
+
+        let f2 = parse_func(quote! { fn func2() -> (bool, Self, i32) });
+
+        assert_eq!(
+            quote! { fn func2() -> (bool, TEST, i32) }.to_string(),
+            edit_self_return_type(&f2, &name)
+                .to_token_stream()
+                .to_string()
+        );
+
+        let f3 = parse_func(quote! { fn func3() -> (bool, Self, (i32, String, Self)) });
+
+        assert_eq!(
+            quote! { fn func3() -> (bool, TEST, (i32, String, TEST)) }.to_string(),
+            edit_self_return_type(&f3, &name)
+                .to_token_stream()
+                .to_string()
+        );
     }
 
     #[test]
-    fn returned_type_in_self() {
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> Option<Self> }
-        )));
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> Result<Self, ()> }
-        )));
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> Option<(bool, String, isize, Self)> }
-        )));
-        assert!(is_returned_self(parse_func(
-            quote! { fn func1() -> Result<Option<(bool, String, isize, Self)>, ()> }
-        )));
+    fn return_type_with_self_in_type() {
+        let name = format_ident!("TEST");
+
+        let f1 = parse_func(quote! { fn func1() -> Result<Option<(bool, Self)>, ()> });
+
+        assert_eq!(
+            quote! { fn func1() -> Result<Option<(bool, TEST)>, ()> }.to_string(),
+            edit_self_return_type(&f1, &name)
+                .to_token_stream()
+                .to_string()
+        );
     }
 
     #[test]
@@ -796,7 +799,8 @@ mod tests {
             Data = Elem1 | Elem2 with DataFunc {
                 fn func1(&self);
                 fn func2(&self, a: isize) -> Self;
-                fn func3(&self, a: String, b: bool) -> Self;
+                fn func3(&self, a: String, b: bool) -> (Self, isize);
+                fn func4(&self, a: f32) -> Result<(Self, String, isize), ()>;
             }
         };
 
@@ -813,8 +817,9 @@ mod tests {
 
                     pub trait DataFunc {
                         fn func1(&self);
-                        fn func2(&self, a: isize) -> Self;
-                        fn func3(&self, a: String, b: bool) -> Self;
+                        fn func2(&self, a: isize) -> Data;
+                        fn func3(&self, a: String, b: bool) -> (Data, isize);
+                        fn func4(&self, a: f32) -> Result<(Data, String, isize), ()>;
                     }
 
                     impl DataFunc for Data {
@@ -825,34 +830,25 @@ mod tests {
                             }
                         }
 
-                        fn func2(&self, a: isize) -> Self {
+                        fn func2(&self, a: isize) -> Data {
                             match self {
-                                Self::Elem1_(x) => Self::convert(DataFunc::func2(x, a)),
-                                Self::Elem2_(x) => Self::convert(DataFunc::func2(x, a)),
+                                Self::Elem1_(x) => DataFunc::func2(x, a),
+                                Self::Elem2_(x) => DataFunc::func2(x, a),
                             }
                         }
 
-                        fn func3(&self, a: String, b: bool) -> Self {
+                        fn func3(&self, a: String, b: bool) -> (Data, isize) {
                             match self {
-                                Self::Elem1_(x) => Self::convert(DataFunc::func3(x, a, b)),
-                                Self::Elem2_(x) => Self::convert(DataFunc::func3(x, a, b)),
+                                Self::Elem1_(x) => DataFunc::func3(x, a, b),
+                                Self::Elem2_(x) => DataFunc::func3(x, a, b),
                             }
                         }
-                    }
 
-                    trait DataSelfConvert_<T> {
-                        type Item;
-                        fn convert(v: T) -> Self::Item;
-                    }
-
-                    impl<T> DataSelfConvert_<T> for Data
-                    where
-                        T: Into<Self>,
-                    {
-                        type Item = Self;
-
-                        fn convert(v: T) -> Self::Item {
-                            v.into()
+                        fn func4(&self, a: f32) -> Result<(Data, String, isize), ()> {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::func4(x, a),
+                                Self::Elem2_(x) => DataFunc::func4(x, a),
+                            }
                         }
                     }
 

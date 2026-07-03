@@ -2,6 +2,15 @@
 name = "example"
 version = "0.1.0"
 edition = "2024"
+default-run = "main"
 
 [dependencies]
 frsums = { path = "../" }
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[[bin]]
+name = "example1"
+path = "src/example1.rs"

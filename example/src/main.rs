@@ -43,8 +43,8 @@ impl ItemImpl for A {
         println!("{prefix} {value} {flag}, {self:?}");
     }
 
-    fn add(&self, value: isize) -> Self {
-        self.clone()
+    fn add(&self, value: isize) -> Item {
+        self.clone().into()
     }
 
     fn show2<T: Debug>(&self, v: T) -> String {
@@ -58,14 +58,18 @@ impl ItemImpl for B {
     }
 
     fn print(&self, prefix: &str, value: i32, flag: bool) {
-        println!("{prefix} {value} {flag}, B(name={}, value={})", self.name, self.value);
+        println!(
+            "{prefix} {value} {flag}, B(name={}, value={})",
+            self.name, self.value
+        );
     }
 
-    fn add(&self, value: isize) -> Self {
+    fn add(&self, value: isize) -> Item {
         Self {
             name: self.name.clone(),
             value: self.value + value,
         }
+        .into()
     }
 
     fn show2<T: Debug>(&self, v: T) -> String {
