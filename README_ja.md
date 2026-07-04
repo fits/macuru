@@ -1,18 +1,18 @@
-[japanese](./README_ja.md)
+[english](./README.md)
 
 # Macuru
 
-```Macuru``` is the utility macro library for Rust.
+```Macuru``` はRust用のユーティリティマクロライブラリです。
 
 ## ADT (Algebraic data type)
 
-```adt!``` macro has the following features to assist with ADT definitions in Rust.
+```adt!``` マクロはADT（代数的データ型）の定義を補助するため以下を実施します。
 
-* generate the enum type
-    * element name is ```<type>_```
-* implement enum and element type conversion
-* definition and implement for trait
-    * convert ```Self``` return type into the enum type
+* enum型の生成
+    * 要素名は```<要素型>_```
+* enum型と要素型の相互変換を実装
+* トレイト定義とenum型の実装
+    * 関数の戻り値に含まれる```Self```をenum型へ変更
 
 ```rust
 use macuru::adt;
@@ -25,12 +25,12 @@ adt!(
 );
 ```
 
-However, there are the following restrictions.
+ただし、次の制限があります。
 
-* method receiver is only ```&self```
-* generics are not permitted for types or trait
+* 関数（メソッド）のレシーバーは```&self```のみ
+* 型やトレイトへのジェネリクス利用は不可
 
-### Example1
+### 例1
 
 ```rust
 use macuru::adt;
@@ -38,7 +38,7 @@ use macuru::adt;
 adt!( Data = Elem1 | Elem2 );
 ```
 
-#### Macro results
+#### マクロ適用結果
 
 ```rust
 #[derive(Clone, Debug)]
@@ -84,7 +84,7 @@ impl TryFrom<Data> for Elem2 {
 }
 ```
 
-### Example2
+### 例2
 
 ```rust
 use macuru::adt;
@@ -99,7 +99,7 @@ adt!(
 );
 ```
 
-#### Macro results
+#### マクロ適用結果
 
 ```rust
 #[derive(Clone, Debug)]
@@ -144,9 +144,9 @@ impl DataFunc for Data {
         }
     }
 }
-...
+... 省略
 ```
 
-## License
+## ライセンス
 
-* [MIT license](./LICENSE.txt)
+* [MITライセンス](./LICENSE.txt)
