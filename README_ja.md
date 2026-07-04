@@ -4,7 +4,44 @@
 
 ```Macuru``` はRust用のユーティリティマクロライブラリです。
 
-## ADT (Algebraic data type)
+## 使い方
+
+```toml
+[dependencies]
+macuru = { git = "https://github.com/fits/macuru" }
+```
+
+```adt!```マクロがenum定義などのボイラープレートコードを生成するので必要な箇所を実装します。
+
+```rust
+use macuru::adt;
+
+adt!(
+    Data = Empty | NonEmpty with DataFunc {
+        fn add(&self, v: usize) -> Option<Self>;
+        fn remove(&self, v: usize) -> Option<Self>;
+    }
+);
+
+#[derive(Clone, Debug)]
+pub struct Empty(String);
+
+#[derive(Clone, Debug)]
+pub struct NonEmpty {
+    name: String,
+    value: usize,
+}
+
+impl DataFunc for Empty {
+    fn add(&self, v: usize) -> Option<Data> {
+        ...
+    }
+    ...
+}
+...
+```
+
+## ADT (Algebraic data type) マクロ
 
 ```adt!``` マクロはADT（代数的データ型）の定義を補助するため以下を実施します。
 
@@ -15,8 +52,6 @@
     * 関数の戻り値に含まれる```Self```をenum型へ変更
 
 ```rust
-use macuru::adt;
-
 adt!(
     <enum-type> = <type> | <type> ... [ with <trait-name> {
         <trait-function>;
@@ -33,8 +68,6 @@ adt!(
 ### 例1
 
 ```rust
-use macuru::adt;
-
 adt!( Data = Elem1 | Elem2 );
 ```
 
@@ -87,8 +120,6 @@ impl TryFrom<Data> for Elem2 {
 ### 例2
 
 ```rust
-use macuru::adt;
-
 adt!( 
     Data = Elem1 | Elem2 with DataFunc {
         fn func1(&self);
@@ -144,7 +175,7 @@ impl DataFunc for Data {
         }
     }
 }
-... 省略
+...
 ```
 
 ## ライセンス

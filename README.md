@@ -4,7 +4,44 @@
 
 ```Macuru``` is the utility macro library for Rust.
 
-## ADT (Algebraic data type)
+## Usage
+
+```toml
+[dependencies]
+macuru = { git = "https://github.com/fits/macuru" }
+```
+
+```adt!``` macro generates boilerplate code for ADT.
+
+```rust
+use macuru::adt;
+
+adt!(
+    Data = Empty | NonEmpty with DataFunc {
+        fn add(&self, v: usize) -> Option<Self>;
+        fn remove(&self, v: usize) -> Option<Self>;
+    }
+);
+
+#[derive(Clone, Debug)]
+pub struct Empty(String);
+
+#[derive(Clone, Debug)]
+pub struct NonEmpty {
+    name: String,
+    value: usize,
+}
+
+impl DataFunc for Empty {
+    fn add(&self, v: usize) -> Option<Data> {
+        ...
+    }
+    ...
+}
+...
+```
+
+## ADT (Algebraic data type) Macro
 
 ```adt!``` macro has the following features to assist with ADT definitions in Rust.
 
@@ -15,8 +52,6 @@
     * convert ```Self``` return type into the enum type
 
 ```rust
-use macuru::adt;
-
 adt!(
     <enum-type> = <type> | <type> ... [ with <trait-name> {
         <trait-function>;
@@ -33,8 +68,6 @@ However, there are the following restrictions.
 ### Example1
 
 ```rust
-use macuru::adt;
-
 adt!( Data = Elem1 | Elem2 );
 ```
 
@@ -87,8 +120,6 @@ impl TryFrom<Data> for Elem2 {
 ### Example2
 
 ```rust
-use macuru::adt;
-
 adt!( 
     Data = Elem1 | Elem2 with DataFunc {
         fn func1(&self);
