@@ -276,6 +276,24 @@ mod tests {
     }
 
     #[test]
+    fn generics_enum() {
+        let input = quote! { Data<T> = Elem1 | Elem2 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn generics_element() {
+        let input = quote! { Data = Elem1<i32> | Elem2 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn many_types() {
         let input = quote! { Data = Data1 | Data2 | Data3 | Data4 };
 
@@ -567,6 +585,20 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> Result<Option<(bool, TEST)>, ()> }.to_string(),
+            edit_self_return_type(&f1, &name)
+                .to_token_stream()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn return_type_with_self_in_fn() {
+        let name = format_ident!("TEST");
+
+        let f1 = parse_func(quote! { fn func1() -> impl Fn(i32) -> Option<(bool, Self)> });
+
+        assert_eq!(
+            quote! { fn func1() -> impl Fn(i32) -> Option<(bool, TEST)> }.to_string(),
             edit_self_return_type(&f1, &name)
                 .to_token_stream()
                 .to_string()
