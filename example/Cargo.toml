@@ -1,11 +1,11 @@
 [package]
-name = "example"
+name = "macuru-example"
 version = "0.1.0"
 edition = "2024"
 default-run = "main"
 
 [dependencies]
-frsums = { path = "../" }
+macuru = { path = "../" }
 
 [[bin]]
 name = "main"

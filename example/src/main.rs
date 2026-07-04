@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use frsums::adt;
+use macuru::adt;
 use std::fmt::Debug;
 
 adt!(Data = Elem1 | Elem2);

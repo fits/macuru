@@ -1,4 +1,4 @@
-use frsums::adt;
+use macuru::adt;
 
 adt!(
     Data = Empty | NonEmpty with DataFunc {

@@ -1,3 +1,3 @@
-# Frsums
+# Macuru
 
-```Frsums``` is the utility macros for Rust.
+```Macuru``` is the utility macros library for Rust.
