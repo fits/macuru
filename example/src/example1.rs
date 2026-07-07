@@ -1,7 +1,7 @@
 use macuru::adt;
 
 adt!(
-    Data = Empty | NonEmpty with DataFunc {
+    Data = Empty | NonEmpty derive Clone, Debug with DataFunc {
         fn add(&self, v: usize) -> Option<Self>;
         fn remove(&self, v: usize) -> Option<Self>;
     }

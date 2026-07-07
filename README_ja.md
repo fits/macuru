@@ -17,7 +17,7 @@ macuru = { git = "https://github.com/fits/macuru" }
 use macuru::adt;
 
 adt!(
-    Data = Empty | NonEmpty with DataFunc {
+    Data = Empty | NonEmpty derive Clone, Debug with DataFunc {
         fn add(&self, v: usize) -> Option<Self>;
         fn remove(&self, v: usize) -> Option<Self>;
     }
@@ -53,7 +53,7 @@ impl DataFunc for Empty {
 
 ```rust
 adt!(
-    <enum-type> = <type> | <type> ... [ with <trait-name> {
+    <enum-type> = <type> | <type> ... [ derive <trait>, ... ] [ with <trait-name> {
         <trait-function>;
         ...
     }]
@@ -74,7 +74,6 @@ adt!( Data = Elem1 | Elem2 );
 #### マクロ適用結果
 
 ```rust
-#[derive(Clone, Debug)]
 pub enum Data {
     Elem1_(Elem1),
     Elem2_(Elem2),
@@ -120,8 +119,32 @@ impl TryFrom<Data> for Elem2 {
 ### 例2
 
 ```rust
+adt!( Data = Elem1 | Elem2 | Elem3 derive Clone, Debug );
+```
+
+#### マクロ適用結果
+
+```rust
+#[derive(Clone, Debug)]
+pub enum Data {
+    Elem1_(Elem1),
+    Elem2_(Elem2),
+    Elem3_(Elem3),
+}
+
+impl From<Elem1> for Data {
+    fn from(v: Elem1) -> Self {
+        Self::Elem1_(v)
+    }
+}
+...
+```
+
+### 例3
+
+```rust
 adt!( 
-    Data = Elem1 | Elem2 with DataFunc {
+    Data = Elem1 | Elem2 derive Clone, Debug with DataFunc {
         fn func1(&self);
         fn func2(&self, a: isize) -> Self;
         fn func3(&self, a: String, b: bool) -> (Self, isize);

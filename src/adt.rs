@@ -1,22 +1,28 @@
-use std::ops::Not;
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{Error, FnArg, Ident, Signature, Token, TraitItemFn, braced};
 
+use std::ops::Not;
+
+syn::custom_keyword!(derive);
 syn::custom_keyword!(with);
 
 struct AdtType {
     name: Ident,
-    type_list: Vec<Ident>,
+    types: Vec<Ident>,
+    derive_def: Option<AdtDeriveType>,
     trait_def: Option<AdtTraitType>,
+}
+
+struct AdtDeriveType {
+    derives: Vec<Ident>,
 }
 
 struct AdtTraitType {
     name: Ident,
-    func_list: Vec<TraitItemFn>,
+    functions: Vec<TraitItemFn>,
 }
 
 impl AdtTraitType {
@@ -30,47 +36,34 @@ impl AdtTraitType {
     }
 }
 
-impl Parse for AdtTraitType {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?;
-
-        let body;
-        braced!(body in input);
-
-        let mut func_list: Vec<TraitItemFn> = vec![];
-
-        while body.is_empty().not() {
-            func_list.push(body.parse::<TraitItemFn>()?);
-        }
-
-        if Self::check_receiver(&func_list) {
-            Ok(AdtTraitType { name, func_list })
-        } else {
-            Err(Error::new(
-                input.span(),
-                "invalid receiver. support only '&self'",
-            ))
-        }
-    }
-}
-
 impl Parse for AdtType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
         input.parse::<Token![=]>()?;
 
-        let mut type_list: Vec<Ident> = vec![];
+        let mut types: Vec<Ident> = vec![];
+        let mut derive_def = None;
         let mut trait_def = None;
 
-        type_list.push(input.parse::<Ident>()?);
+        types.push(input.parse::<Ident>()?);
 
         while input.is_empty().not() {
+            if input.peek(derive) {
+                input.parse::<derive>()?;
+
+                derive_def = Some(AdtDeriveType::parse(input)?);
+
+                if input.is_empty() {
+                    break;
+                }
+            }
+
             if input.peek(with) {
                 input.parse::<with>()?;
 
                 let att = AdtTraitType::parse(input)?;
 
-                if att.func_list.is_empty().not() {
+                if att.functions.is_empty().not() {
                     trait_def = Some(att);
                 }
 
@@ -78,17 +71,55 @@ impl Parse for AdtType {
             }
 
             input.parse::<Token![|]>()?;
-            type_list.push(input.parse::<Ident>()?);
+            types.push(input.parse::<Ident>()?);
         }
 
-        if type_list.len() >= 2 {
+        if types.len() >= 2 {
             Ok(Self {
                 name,
-                type_list,
+                types,
+                derive_def,
                 trait_def,
             })
         } else {
             Err(Error::new(input.span(), "must 2 data types or more"))
+        }
+    }
+}
+
+impl Parse for AdtDeriveType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut derives: Vec<Ident> = vec![input.parse::<Ident>()?];
+
+        while input.peek(with).not() && input.is_empty().not() {
+            input.parse::<Token![,]>()?;
+            derives.push(input.parse::<Ident>()?);
+        }
+
+        Ok(Self { derives })
+    }
+}
+
+impl Parse for AdtTraitType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let name = input.parse::<Ident>()?;
+
+        let body;
+        braced!(body in input);
+
+        let mut functions: Vec<TraitItemFn> = vec![];
+
+        while body.is_empty().not() {
+            functions.push(body.parse::<TraitItemFn>()?);
+        }
+
+        if Self::check_receiver(&functions) {
+            Ok(AdtTraitType { name, functions })
+        } else {
+            Err(Error::new(
+                input.span(),
+                "invalid receiver. support only '&self'",
+            ))
         }
     }
 }
@@ -110,14 +141,15 @@ impl Fold for SelfTypeEditor {
 pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
-        type_list,
+        types,
+        derive_def,
         trait_def,
     } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    for x in &type_list {
+    for x in &types {
         let enum_element = to_element_name(x);
 
         elements = quote! {
@@ -148,12 +180,14 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
+    let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
+
     let trait_gen = trait_def
-        .map(|x| adt_trait_generate(&name, &type_list, x))
+        .map(|x| trait_generate(&name, &types, x))
         .unwrap_or_default();
 
     Ok(quote! {
-        #[derive(Clone, Debug)]
+        #derive_gen
         pub enum #name {
             #elements
         }
@@ -177,13 +211,25 @@ fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
     res
 }
 
-fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
-    let trait_name = att.name;
+fn derive_generate(dt: AdtDeriveType) -> TokenStream {
+    let derive_args = dt.derives.iter().fold(TokenStream::new(), |acc, x| {
+        if acc.is_empty() {
+            quote! { #x }
+        } else {
+            quote! { #acc, #x }
+        }
+    });
+
+    quote! { #[derive(#derive_args)] }
+}
+
+fn trait_generate(name: &Ident, types: &Vec<Ident>, tt: AdtTraitType) -> TokenStream {
+    let trait_name = tt.name;
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
 
-    for f in att.func_list {
+    for f in tt.functions {
         let mut f = f.clone();
         f.sig = edit_self_return_type(&f.sig, name);
 
@@ -207,7 +253,7 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
             }
         });
 
-        let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
+        let func_body = types.iter().fold(TokenStream::new(), |acc, x| {
             let enum_element = to_element_name(x);
 
             quote! {
@@ -264,11 +310,12 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
-            assert_eq!("Data1", a.type_list.get(0).unwrap().to_string());
-            assert_eq!("Data2", a.type_list.get(1).unwrap().to_string());
+            assert_eq!("Data1", a.types.get(0).unwrap().to_string());
+            assert_eq!("Data2", a.types.get(1).unwrap().to_string());
 
+            assert!(a.derive_def.is_none());
             assert!(a.trait_def.is_none());
         } else {
             assert!(false, "parse error");
@@ -325,6 +372,113 @@ mod tests {
     }
 
     #[test]
+    fn single_derive() {
+        let input = quote! { Data = Data1 | Data2 derive Clone };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert!(a.derive_def.is_some());
+
+            let d = a.derive_def.unwrap();
+            assert_eq!("Clone", d.derives.get(0).unwrap().to_string());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn empty_derive() {
+        let input = quote! { Data = Data1 | Data2 derive };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn empty_derive_and_with() {
+        let input = quote! { Data = Data1 | Data2 derive with DataImpl {}};
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn single_type_derive() {
+        let input = quote! {
+            Data = Data1 derive Debug
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn many_derives() {
+        let input = quote! { Data = Data1 | Data2 derive Clone, Debug, PartialEq };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert!(a.derive_def.is_some());
+
+            let d = a.derive_def.unwrap();
+
+            assert_eq!(3, d.derives.len());
+            assert_eq!("Clone", d.derives.get(0).unwrap().to_string());
+            assert_eq!("Debug", d.derives.get(1).unwrap().to_string());
+            assert_eq!("PartialEq", d.derives.get(2).unwrap().to_string());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn derive_and_with() {
+        let input = quote! {
+            Data = Data1 | Data2 derive Clone with DataImpl {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.types.len());
+            assert!(a.derive_def.is_some());
+            assert_eq!(1, a.derive_def.unwrap().derives.len());
+            assert!(a.trait_def.is_some());
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn many_derives_and_with() {
+        let input = quote! {
+            Data = Data1 | Data2 derive Clone, Debug, PartialEq with DataImpl {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.types.len());
+            assert!(a.derive_def.is_some());
+            assert_eq!(3, a.derive_def.unwrap().derives.len());
+            assert!(a.trait_def.is_some());
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
     fn with_generics_trait() {
         let input = quote! {
             Data = Data1 | Data2 with DataFunc<T> {
@@ -349,7 +503,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
@@ -357,11 +511,11 @@ mod tests {
 
             assert_eq!("DataImpl", tr.name.to_string());
 
-            assert_eq!(1, tr.func_list.len());
+            assert_eq!(1, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -380,7 +534,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
@@ -388,11 +542,11 @@ mod tests {
 
             assert_eq!("DataImpl", tr.name.to_string());
 
-            assert_eq!(1, tr.func_list.len());
+            assert_eq!(1, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1<T>(&self, p: T) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -412,22 +566,22 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
             let tr = a.trait_def.unwrap();
 
             assert_eq!("DataFunc", tr.name.to_string());
-            assert_eq!(2, tr.func_list.len());
+            assert_eq!(2, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
             assert_eq!(
                 quote! { fn func2(&self, s: String, b: bool) -> Self; }.to_string(),
-                tr.func_list.get(1).unwrap().to_token_stream().to_string()
+                tr.functions.get(1).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -448,6 +602,19 @@ mod tests {
     }
 
     #[test]
+    fn single_type_with_derive_and_func() {
+        let input = quote! {
+            Data = Data1 derive Debug with DataImpl {
+                fn func1(&self) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn with_empty_func() {
         let input = quote! {
             Data = Data1 | Data2 with DataImpl {
@@ -458,7 +625,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_none());
         } else {
@@ -614,6 +781,64 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false, "failed adt_proc")
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_two_types_and_derive() {
+        let input = quote! { Data = Elem1 | Elem2 derive Clone, Debug };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
                     #[derive(Clone, Debug)]
                     pub enum Data {
                         Elem1_(Elem1),
@@ -677,7 +902,82 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
-                    #[derive(Clone, Debug)]
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataImpl {
+                        fn func1(&self, a: isize, b: String);
+                    }
+
+                    impl DataImpl for Data {
+                        fn func1(&self, a: isize, b: String) {
+                            match self {
+                                Self::Elem1_(x) => DataImpl::func1(x, a, b),
+                                Self::Elem2_(x) => DataImpl::func1(x, a, b),
+                            }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_void_func_and_derive() {
+        let input = quote! {
+            Data = Elem1 | Elem2 derive Debug, Clone with DataImpl {
+                fn func1(&self, a: isize, b: String);
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Debug, Clone)]
                     pub enum Data {
                         Elem1_(Elem1),
                         Elem2_(Elem2),
@@ -754,7 +1054,6 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
-                    #[derive(Clone, Debug)]
                     pub enum Data {
                         Elem1_(Elem1),
                         Elem2_(Elem2),
@@ -826,9 +1125,9 @@ mod tests {
     }
 
     #[test]
-    fn adt_generate_with_self_return_func() {
+    fn adt_generate_with_self_return_func_and_derive() {
         let input = quote! {
-            Data = Elem1 | Elem2 with DataFunc {
+            Data = Elem1 | Elem2 derive Clone, Debug with DataFunc {
                 fn func1(&self);
                 fn func2(&self, a: isize) -> Self;
                 fn func3(&self, a: String, b: bool) -> (Self, isize);
