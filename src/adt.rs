@@ -10,13 +10,13 @@ syn::custom_keyword!(with);
 
 struct AdtType {
     name: Ident,
-    type_list: Vec<Ident>,
+    types: Vec<Ident>,
     trait_def: Option<AdtTraitType>,
 }
 
 struct AdtTraitType {
     name: Ident,
-    func_list: Vec<TraitItemFn>,
+    functions: Vec<TraitItemFn>,
 }
 
 impl AdtTraitType {
@@ -37,14 +37,14 @@ impl Parse for AdtTraitType {
         let body;
         braced!(body in input);
 
-        let mut func_list: Vec<TraitItemFn> = vec![];
+        let mut functions: Vec<TraitItemFn> = vec![];
 
         while body.is_empty().not() {
-            func_list.push(body.parse::<TraitItemFn>()?);
+            functions.push(body.parse::<TraitItemFn>()?);
         }
 
-        if Self::check_receiver(&func_list) {
-            Ok(AdtTraitType { name, func_list })
+        if Self::check_receiver(&functions) {
+            Ok(AdtTraitType { name, functions })
         } else {
             Err(Error::new(
                 input.span(),
@@ -59,10 +59,10 @@ impl Parse for AdtType {
         let name = input.parse::<Ident>()?;
         input.parse::<Token![=]>()?;
 
-        let mut type_list: Vec<Ident> = vec![];
+        let mut types: Vec<Ident> = vec![];
         let mut trait_def = None;
 
-        type_list.push(input.parse::<Ident>()?);
+        types.push(input.parse::<Ident>()?);
 
         while input.is_empty().not() {
             if input.peek(with) {
@@ -70,7 +70,7 @@ impl Parse for AdtType {
 
                 let att = AdtTraitType::parse(input)?;
 
-                if att.func_list.is_empty().not() {
+                if att.functions.is_empty().not() {
                     trait_def = Some(att);
                 }
 
@@ -78,13 +78,13 @@ impl Parse for AdtType {
             }
 
             input.parse::<Token![|]>()?;
-            type_list.push(input.parse::<Ident>()?);
+            types.push(input.parse::<Ident>()?);
         }
 
-        if type_list.len() >= 2 {
+        if types.len() >= 2 {
             Ok(Self {
                 name,
-                type_list,
+                types,
                 trait_def,
             })
         } else {
@@ -110,14 +110,14 @@ impl Fold for SelfTypeEditor {
 pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
-        type_list,
+        types,
         trait_def,
     } = syn::parse2::<AdtType>(input)?;
 
     let mut elements = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    for x in &type_list {
+    for x in &types {
         let enum_element = to_element_name(x);
 
         elements = quote! {
@@ -149,7 +149,7 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     }
 
     let trait_gen = trait_def
-        .map(|x| adt_trait_generate(&name, &type_list, x))
+        .map(|x| adt_trait_generate(&name, &types, x))
         .unwrap_or_default();
 
     Ok(quote! {
@@ -177,13 +177,13 @@ fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
     res
 }
 
-fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
+fn adt_trait_generate(name: &Ident, types: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
     let trait_name = att.name;
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
 
-    for f in att.func_list {
+    for f in att.functions {
         let mut f = f.clone();
         f.sig = edit_self_return_type(&f.sig, name);
 
@@ -207,7 +207,7 @@ fn adt_trait_generate(name: &Ident, type_list: &Vec<Ident>, att: AdtTraitType) -
             }
         });
 
-        let func_body = type_list.iter().fold(TokenStream::new(), |acc, x| {
+        let func_body = types.iter().fold(TokenStream::new(), |acc, x| {
             let enum_element = to_element_name(x);
 
             quote! {
@@ -264,10 +264,10 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
-            assert_eq!("Data1", a.type_list.get(0).unwrap().to_string());
-            assert_eq!("Data2", a.type_list.get(1).unwrap().to_string());
+            assert_eq!("Data1", a.types.get(0).unwrap().to_string());
+            assert_eq!("Data2", a.types.get(1).unwrap().to_string());
 
             assert!(a.trait_def.is_none());
         } else {
@@ -349,7 +349,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
@@ -357,11 +357,11 @@ mod tests {
 
             assert_eq!("DataImpl", tr.name.to_string());
 
-            assert_eq!(1, tr.func_list.len());
+            assert_eq!(1, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -380,7 +380,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
@@ -388,11 +388,11 @@ mod tests {
 
             assert_eq!("DataImpl", tr.name.to_string());
 
-            assert_eq!(1, tr.func_list.len());
+            assert_eq!(1, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1<T>(&self, p: T) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -412,22 +412,22 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_some());
 
             let tr = a.trait_def.unwrap();
 
             assert_eq!("DataFunc", tr.name.to_string());
-            assert_eq!(2, tr.func_list.len());
+            assert_eq!(2, tr.functions.len());
 
             assert_eq!(
                 quote! { fn func1(&self, p: isize) -> String; }.to_string(),
-                tr.func_list.get(0).unwrap().to_token_stream().to_string()
+                tr.functions.get(0).unwrap().to_token_stream().to_string()
             );
             assert_eq!(
                 quote! { fn func2(&self, s: String, b: bool) -> Self; }.to_string(),
-                tr.func_list.get(1).unwrap().to_token_stream().to_string()
+                tr.functions.get(1).unwrap().to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
@@ -458,7 +458,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.type_list.len());
+            assert_eq!(2, a.types.len());
 
             assert!(a.trait_def.is_none());
         } else {
