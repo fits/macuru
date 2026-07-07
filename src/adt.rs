@@ -1,17 +1,23 @@
-use std::ops::Not;
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{Error, FnArg, Ident, Signature, Token, TraitItemFn, braced};
 
+use std::ops::Not;
+
+syn::custom_keyword!(derive);
 syn::custom_keyword!(with);
 
 struct AdtType {
     name: Ident,
     types: Vec<Ident>,
+    derive_def: Option<AdtDeriveType>,
     trait_def: Option<AdtTraitType>,
+}
+
+struct AdtDeriveType {
+    derives: Vec<Ident>,
 }
 
 struct AdtTraitType {
@@ -27,6 +33,70 @@ impl AdtTraitType {
                 .filter(|&x| x.reference.is_some() && x.mutability.is_none())
                 .is_some()
         })
+    }
+}
+
+impl Parse for AdtType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let name = input.parse::<Ident>()?;
+        input.parse::<Token![=]>()?;
+
+        let mut types: Vec<Ident> = vec![];
+        let mut derive_def = None;
+        let mut trait_def = None;
+
+        types.push(input.parse::<Ident>()?);
+
+        while input.is_empty().not() {
+            if input.peek(derive) {
+                input.parse::<derive>()?;
+
+                derive_def = Some(AdtDeriveType::parse(input)?);
+
+                if input.is_empty() {
+                    break;
+                }
+            }
+
+            if input.peek(with) {
+                input.parse::<with>()?;
+
+                let att = AdtTraitType::parse(input)?;
+
+                if att.functions.is_empty().not() {
+                    trait_def = Some(att);
+                }
+
+                break;
+            }
+
+            input.parse::<Token![|]>()?;
+            types.push(input.parse::<Ident>()?);
+        }
+
+        if types.len() >= 2 {
+            Ok(Self {
+                name,
+                types,
+                derive_def,
+                trait_def,
+            })
+        } else {
+            Err(Error::new(input.span(), "must 2 data types or more"))
+        }
+    }
+}
+
+impl Parse for AdtDeriveType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut derives: Vec<Ident> = vec![input.parse::<Ident>()?];
+
+        while input.peek(with).not() && input.is_empty().not() {
+            input.parse::<Token![,]>()?;
+            derives.push(input.parse::<Ident>()?);
+        }
+
+        Ok(Self { derives })
     }
 }
 
@@ -54,45 +124,6 @@ impl Parse for AdtTraitType {
     }
 }
 
-impl Parse for AdtType {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?;
-        input.parse::<Token![=]>()?;
-
-        let mut types: Vec<Ident> = vec![];
-        let mut trait_def = None;
-
-        types.push(input.parse::<Ident>()?);
-
-        while input.is_empty().not() {
-            if input.peek(with) {
-                input.parse::<with>()?;
-
-                let att = AdtTraitType::parse(input)?;
-
-                if att.functions.is_empty().not() {
-                    trait_def = Some(att);
-                }
-
-                break;
-            }
-
-            input.parse::<Token![|]>()?;
-            types.push(input.parse::<Ident>()?);
-        }
-
-        if types.len() >= 2 {
-            Ok(Self {
-                name,
-                types,
-                trait_def,
-            })
-        } else {
-            Err(Error::new(input.span(), "must 2 data types or more"))
-        }
-    }
-}
-
 struct SelfTypeEditor(Ident);
 
 impl Fold for SelfTypeEditor {
@@ -111,6 +142,7 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
         types,
+        derive_def,
         trait_def,
     } = syn::parse2::<AdtType>(input)?;
 
@@ -269,6 +301,7 @@ mod tests {
             assert_eq!("Data1", a.types.get(0).unwrap().to_string());
             assert_eq!("Data2", a.types.get(1).unwrap().to_string());
 
+            assert!(a.derive_def.is_none());
             assert!(a.trait_def.is_none());
         } else {
             assert!(false, "parse error");
@@ -322,6 +355,113 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn single_derive() {
+        let input = quote! { Data = Data1 | Data2 derive Clone };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert!(a.derive_def.is_some());
+
+            let d = a.derive_def.unwrap();
+            assert_eq!("Clone", d.derives.get(0).unwrap().to_string());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn empty_derive() {
+        let input = quote! { Data = Data1 | Data2 derive };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn empty_derive_and_with() {
+        let input = quote! { Data = Data1 | Data2 derive with DataImpl {}};
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn single_type_derive() {
+        let input = quote! {
+            Data = Data1 derive Debug
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn many_derives() {
+        let input = quote! { Data = Data1 | Data2 derive Clone, Debug, PartialEq };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert!(a.derive_def.is_some());
+
+            let d = a.derive_def.unwrap();
+
+            assert_eq!(3, d.derives.len());
+            assert_eq!("Clone", d.derives.get(0).unwrap().to_string());
+            assert_eq!("Debug", d.derives.get(1).unwrap().to_string());
+            assert_eq!("PartialEq", d.derives.get(2).unwrap().to_string());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn derive_and_with() {
+        let input = quote! {
+            Data = Data1 | Data2 derive Clone with DataImpl {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.types.len());
+            assert!(a.derive_def.is_some());
+            assert_eq!(1, a.derive_def.unwrap().derives.len());
+            assert!(a.trait_def.is_some());
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn many_derives_and_with() {
+        let input = quote! {
+            Data = Data1 | Data2 derive Clone, Debug, PartialEq with DataImpl {
+                fn func1(&self, p: isize) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert_eq!("Data", a.name.to_string());
+            assert_eq!(2, a.types.len());
+            assert!(a.derive_def.is_some());
+            assert_eq!(3, a.derive_def.unwrap().derives.len());
+            assert!(a.trait_def.is_some());
+        } else {
+            assert!(false);
+        }
     }
 
     #[test]
@@ -438,6 +578,19 @@ mod tests {
     fn single_type_with_func() {
         let input = quote! {
             Data = Data1 with DataImpl {
+                fn func1(&self) -> Self;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn single_type_with_derive_and_func() {
+        let input = quote! {
+            Data = Data1 derive Debug with DataImpl {
                 fn func1(&self) -> Self;
             }
         };
