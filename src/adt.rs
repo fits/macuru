@@ -180,12 +180,14 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
+    let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
+
     let trait_gen = trait_def
-        .map(|x| adt_trait_generate(&name, &types, x))
+        .map(|x| trait_generate(&name, &types, x))
         .unwrap_or_default();
 
     Ok(quote! {
-        #[derive(Clone, Debug)]
+        #derive_gen
         pub enum #name {
             #elements
         }
@@ -209,13 +211,25 @@ fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
     res
 }
 
-fn adt_trait_generate(name: &Ident, types: &Vec<Ident>, att: AdtTraitType) -> TokenStream {
-    let trait_name = att.name;
+fn derive_generate(dt: AdtDeriveType) -> TokenStream {
+    let derive_args = dt.derives.iter().fold(TokenStream::new(), |acc, x| {
+        if acc.is_empty() {
+            quote! { #x }
+        } else {
+            quote! { #acc, #x }
+        }
+    });
+
+    quote! { #[derive(#derive_args)] }
+}
+
+fn trait_generate(name: &Ident, types: &Vec<Ident>, tt: AdtTraitType) -> TokenStream {
+    let trait_name = tt.name;
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
 
-    for f in att.functions {
+    for f in tt.functions {
         let mut f = f.clone();
         f.sig = edit_self_return_type(&f.sig, name);
 
@@ -767,6 +781,64 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false, "failed adt_proc")
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_two_types_and_derive() {
+        let input = quote! { Data = Elem1 | Elem2 derive Clone, Debug };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
                     #[derive(Clone, Debug)]
                     pub enum Data {
                         Elem1_(Elem1),
@@ -830,7 +902,82 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
-                    #[derive(Clone, Debug)]
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataImpl {
+                        fn func1(&self, a: isize, b: String);
+                    }
+
+                    impl DataImpl for Data {
+                        fn func1(&self, a: isize, b: String) {
+                            match self {
+                                Self::Elem1_(x) => DataImpl::func1(x, a, b),
+                                Self::Elem2_(x) => DataImpl::func1(x, a, b),
+                            }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From<Elem2> for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_void_func_and_derive() {
+        let input = quote! {
+            Data = Elem1 | Elem2 derive Debug, Clone with DataImpl {
+                fn func1(&self, a: isize, b: String);
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Debug, Clone)]
                     pub enum Data {
                         Elem1_(Elem1),
                         Elem2_(Elem2),
@@ -907,7 +1054,6 @@ mod tests {
         if let Ok(t) = r {
             assert_eq!(
                 quote! {
-                    #[derive(Clone, Debug)]
                     pub enum Data {
                         Elem1_(Elem1),
                         Elem2_(Elem2),
@@ -979,9 +1125,9 @@ mod tests {
     }
 
     #[test]
-    fn adt_generate_with_self_return_func() {
+    fn adt_generate_with_self_return_func_and_derive() {
         let input = quote! {
-            Data = Elem1 | Elem2 with DataFunc {
+            Data = Elem1 | Elem2 derive Clone, Debug with DataFunc {
                 fn func1(&self);
                 fn func2(&self, a: isize) -> Self;
                 fn func3(&self, a: String, b: bool) -> (Self, isize);

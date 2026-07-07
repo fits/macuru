@@ -3,7 +3,7 @@
 use macuru::adt;
 use std::fmt::Debug;
 
-adt!(Data = Elem1 | Elem2);
+adt!(Data = Elem1 | Elem2 derive Clone, Debug );
 
 #[derive(Clone, Debug)]
 pub struct Elem1(isize);
@@ -15,7 +15,7 @@ pub struct Elem2 {
 }
 
 adt!(
-    Item = A | B with ItemImpl {
+    Item = A | B derive Clone, Debug with ItemImpl {
         fn show(&self) -> String;
         fn print(&self, prefix: &str, value: i32, flag: bool);
         fn add(&self, value: isize) -> Self;
