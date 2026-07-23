@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
-use syn::{Error, FnArg, Ident, Signature, Token, TraitItemFn, braced};
+use syn::{Error, FnArg, Generics, Ident, Signature, Token, TraitItemFn, braced};
 
 use std::ops::Not;
 
@@ -12,6 +12,7 @@ syn::custom_keyword!(with);
 
 struct AdtType {
     name: Ident,
+    generics: Option<Generics>,
     types: Vec<Ident>,
     derive_def: Option<AdtDeriveType>,
     trait_def: Option<AdtTraitType>,
@@ -40,6 +41,12 @@ impl AdtTraitType {
 impl Parse for AdtType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
+        let mut generics = None;
+
+        if input.peek(Token![<]) {
+            generics = Some(input.parse::<Generics>()?);
+        }
+
         input.parse::<Token![=]>()?;
 
         let mut types: Vec<Ident> = vec![];
@@ -78,6 +85,7 @@ impl Parse for AdtType {
         if types.len() >= 2 {
             Ok(Self {
                 name,
+                generics,
                 types,
                 derive_def,
                 trait_def,
@@ -144,6 +152,7 @@ impl Fold for SelfTypeEditor {
 pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
+        generics,
         types,
         derive_def,
         trait_def,
@@ -311,6 +320,7 @@ mod tests {
             assert_eq!("Data1", a.types.get(0).unwrap().to_string());
             assert_eq!("Data2", a.types.get(1).unwrap().to_string());
 
+            assert!(a.generics.is_none());
             assert!(a.derive_def.is_none());
             assert!(a.trait_def.is_none());
         } else {
@@ -321,6 +331,47 @@ mod tests {
     #[test]
     fn generics_enum() {
         let input = quote! { Data<T> = Elem1 | Elem2 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_ok());
+
+        let t = r.unwrap();
+
+        if let Some(g) = t.generics {
+            assert_eq!(1, g.params.len());
+            assert_eq!(quote! { <T> }.to_string(), g.to_token_stream().to_string());
+        } else {
+            assert!(false, "none generics")
+        }
+    }
+
+    #[test]
+    fn generics_enum_type_params() {
+        let input = quote! { Data<A, B, C: Clone> = Elem1 | Elem2 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_ok());
+
+        let t = r.unwrap();
+
+        if let Some(g) = t.generics {
+            assert_eq!(3, g.params.len());
+            assert_eq!(
+                quote! { <A, B, C: Clone> }.to_string(),
+                g.to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "none generics")
+        }
+    }
+
+    #[test]
+    fn generics_enum_with_where() {
+        let input = quote! {
+            Data<A, B> where = Elem1 | Elem2
+        };
 
         let r = syn::parse2::<AdtType>(input);
 
