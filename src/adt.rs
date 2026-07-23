@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
@@ -175,16 +175,8 @@ impl Parse for ElementType {
 
 impl Parse for ElementTypeParam {
     fn parse(input: ParseStream) -> Result<Self> {
-        println!("lt_token before");
-
         let lt_token = input.parse::<Token![<]>()?;
-
-        println!("lt_token after");
-
         let params = parse_punct_idents(&input)?;
-
-        println!("params after");
-
         let gt_token = input.parse::<Token![>]>()?;
 
         Ok(Self {
@@ -192,6 +184,24 @@ impl Parse for ElementTypeParam {
             params,
             gt_token,
         })
+    }
+}
+
+impl ToTokens for ElementType {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.ident.to_tokens(tokens);
+
+        if let Some(x) = &self.type_param {
+            x.to_tokens(tokens);
+        }
+    }
+}
+
+impl ToTokens for ElementTypeParam {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.lt_token.to_tokens(tokens);
+        self.params.to_tokens(tokens);
+        self.gt_token.to_tokens(tokens);
     }
 }
 
@@ -377,6 +387,10 @@ mod tests {
 
         if let Ok(x) = syn::parse2::<ElementTypeParam>(input) {
             assert_eq!(3, x.params.len());
+            assert_eq!(
+                quote! {<A, B, C>}.to_string(),
+                x.to_token_stream().to_string()
+            );
         } else {
             assert!(false, "parse error");
         }
@@ -407,6 +421,8 @@ mod tests {
         if let Ok(x) = syn::parse2::<ElementType>(input) {
             assert_eq!("Elem1", x.ident.to_string());
             assert!(x.type_param.is_none());
+
+            assert_eq!(quote! {Elem1}.to_string(), x.to_token_stream().to_string());
         } else {
             assert!(false, "parse error");
         }
@@ -419,6 +435,11 @@ mod tests {
         if let Ok(x) = syn::parse2::<ElementType>(input) {
             assert_eq!("Elem1", x.ident.to_string());
             assert!(x.type_param.is_some());
+
+            assert_eq!(
+                quote! {Elem1<A, B>}.to_string(),
+                x.to_token_stream().to_string()
+            );
         } else {
             assert!(false, "parse error");
         }
