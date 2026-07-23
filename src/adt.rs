@@ -2,6 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
+use syn::punctuated::Punctuated;
 use syn::{Error, FnArg, Ident, Signature, Token, TraitItemFn, braced};
 
 use std::ops::Not;
@@ -17,7 +18,7 @@ struct AdtType {
 }
 
 struct AdtDeriveType {
-    derives: Vec<Ident>,
+    derives: Punctuated<Ident, Token![,]>,
 }
 
 struct AdtTraitType {
@@ -89,11 +90,13 @@ impl Parse for AdtType {
 
 impl Parse for AdtDeriveType {
     fn parse(input: ParseStream) -> Result<Self> {
-        let mut derives: Vec<Ident> = vec![input.parse::<Ident>()?];
+        let mut derives = Punctuated::new();
+
+        derives.push_value(input.parse::<Ident>()?);
 
         while input.peek(with).not() && input.is_empty().not() {
-            input.parse::<Token![,]>()?;
-            derives.push(input.parse::<Ident>()?);
+            derives.push_punct(input.parse::<Token![,]>()?);
+            derives.push_value(input.parse::<Ident>()?);
         }
 
         Ok(Self { derives })
@@ -212,14 +215,7 @@ fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
 }
 
 fn derive_generate(dt: AdtDeriveType) -> TokenStream {
-    let derive_args = dt.derives.iter().fold(TokenStream::new(), |acc, x| {
-        if acc.is_empty() {
-            quote! { #x }
-        } else {
-            quote! { #acc, #x }
-        }
-    });
-
+    let derive_args = dt.derives;
     quote! { #[derive(#derive_args)] }
 }
 
