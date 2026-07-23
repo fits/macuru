@@ -13,7 +13,7 @@ syn::custom_keyword!(with);
 struct AdtType {
     name: Ident,
     generics: Option<Generics>,
-    types: Vec<Ident>,
+    elements: Vec<ElementType>,
     derive_def: Option<AdtDeriveType>,
     trait_def: Option<AdtTraitType>,
 }
@@ -63,11 +63,12 @@ impl Parse for AdtType {
 
         input.parse::<Token![=]>()?;
 
-        let mut types: Vec<Ident> = vec![];
+        let mut elements = vec![];
+
         let mut derive_def = None;
         let mut trait_def = None;
 
-        types.push(input.parse::<Ident>()?);
+        elements.push(input.parse::<ElementType>()?);
 
         while input.is_empty().not() {
             if input.peek(derive) {
@@ -93,19 +94,19 @@ impl Parse for AdtType {
             }
 
             input.parse::<Token![|]>()?;
-            types.push(input.parse::<Ident>()?);
+            elements.push(input.parse::<ElementType>()?);
         }
 
-        if types.len() >= 2 {
+        if elements.len() >= 2 {
             Ok(Self {
                 name,
                 generics,
-                types,
+                elements,
                 derive_def,
                 trait_def,
             })
         } else {
-            Err(Error::new(input.span(), "must 2 data types or more"))
+            Err(Error::new(input.span(), "must 2 elements or more"))
         }
     }
 }
@@ -223,19 +224,19 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
         name,
         generics,
-        types,
+        elements,
         derive_def,
         trait_def,
     } = syn::parse2::<AdtType>(input)?;
 
-    let mut elements = TokenStream::new();
+    let mut elements_def = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    for x in &types {
-        let enum_element = to_element_name(x);
+    for x in &elements {
+        let enum_element = to_element_name(&x.ident);
 
-        elements = quote! {
-            #elements
+        elements_def = quote! {
+            #elements_def
             #enum_element(#x),
         };
 
@@ -265,13 +266,13 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
 
     let trait_gen = trait_def
-        .map(|x| trait_generate(&name, &types, x))
+        .map(|x| trait_generate(&name, &elements, x))
         .unwrap_or_default();
 
     Ok(quote! {
         #derive_gen
         pub enum #name {
-            #elements
+            #elements_def
         }
 
         #trait_gen
@@ -311,7 +312,7 @@ fn derive_generate(dt: AdtDeriveType) -> TokenStream {
     quote! { #[derive(#derive_args)] }
 }
 
-fn trait_generate(name: &Ident, types: &Vec<Ident>, tt: AdtTraitType) -> TokenStream {
+fn trait_generate(name: &Ident, elements: &Vec<ElementType>, tt: AdtTraitType) -> TokenStream {
     let trait_name = tt.name;
 
     let mut trait_func = TokenStream::new();
@@ -341,8 +342,8 @@ fn trait_generate(name: &Ident, types: &Vec<Ident>, tt: AdtTraitType) -> TokenSt
             }
         });
 
-        let func_body = types.iter().fold(TokenStream::new(), |acc, x| {
-            let enum_element = to_element_name(x);
+        let func_body = elements.iter().fold(TokenStream::new(), |acc, x| {
+            let enum_element = to_element_name(&x.ident);
 
             quote! {
                 #acc
@@ -462,10 +463,16 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
 
-            assert_eq!("Data1", a.types.get(0).unwrap().to_string());
-            assert_eq!("Data2", a.types.get(1).unwrap().to_string());
+            assert_eq!(
+                "Data1",
+                a.elements.get(0).unwrap().to_token_stream().to_string()
+            );
+            assert_eq!(
+                "Data2",
+                a.elements.get(1).unwrap().to_token_stream().to_string()
+            );
 
             assert!(a.generics.is_none());
             assert!(a.derive_def.is_none());
@@ -542,7 +549,25 @@ mod tests {
 
         let r = syn::parse2::<AdtType>(input);
 
-        assert!(r.is_err());
+        if let Ok(a) = r {
+            assert_eq!(2, a.elements.len());
+
+            let el1 = a.elements.get(0).unwrap();
+
+            assert_eq!("Elem1", el1.ident.to_string());
+            assert_eq!(
+                quote! {Elem1<i32>}.to_string(),
+                el1.to_token_stream().to_string()
+            );
+
+            let el2 = a.elements.get(1).unwrap();
+            assert_eq!(
+                quote! {Elem2}.to_string(),
+                el2.to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
     }
 
     #[test]
@@ -653,7 +678,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
             assert!(a.derive_def.is_some());
             assert_eq!(1, a.derive_def.unwrap().derives.len());
             assert!(a.trait_def.is_some());
@@ -674,7 +699,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
             assert!(a.derive_def.is_some());
             assert_eq!(3, a.derive_def.unwrap().derives.len());
             assert!(a.trait_def.is_some());
@@ -752,7 +777,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
@@ -783,7 +808,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
@@ -815,7 +840,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
@@ -874,7 +899,7 @@ mod tests {
 
         if let Ok(a) = r {
             assert_eq!("Data", a.name.to_string());
-            assert_eq!(2, a.types.len());
+            assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_none());
         } else {
