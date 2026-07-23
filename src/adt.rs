@@ -379,6 +379,17 @@ mod tests {
     }
 
     #[test]
+    fn generics_enum_with_where_single() {
+        let input = quote! {
+            Data<A> where A: Debug = Elem1 | Elem2
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn generics_element() {
         let input = quote! { Data = Elem1<i32> | Elem2 };
 
