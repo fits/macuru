@@ -29,6 +29,17 @@ struct AdtTraitType {
     functions: Vec<TraitItemFn>,
 }
 
+struct ElementType {
+    ident: Ident,
+    type_param: Option<ElementTypeParam>,
+}
+
+struct ElementTypeParam {
+    lt_token: Token![<],
+    params: Punctuated<Ident, Token![,]>,
+    gt_token: Token![>],
+}
+
 impl AdtTraitType {
     fn check_receiver(funcs: &Vec<TraitItemFn>) -> bool {
         funcs.iter().all(|f| {
@@ -101,14 +112,7 @@ impl Parse for AdtType {
 
 impl Parse for AdtDeriveType {
     fn parse(input: ParseStream) -> Result<Self> {
-        let mut derives = Punctuated::new();
-
-        derives.push_value(input.parse::<Ident>()?);
-
-        while input.peek(with).not() && input.is_empty().not() {
-            derives.push_punct(input.parse::<Token![,]>()?);
-            derives.push_value(input.parse::<Ident>()?);
-        }
+        let derives = parse_punct_idents(&input)?;
 
         Ok(Self { derives })
     }
@@ -152,6 +156,42 @@ impl Parse for AdtTraitType {
                 "invalid receiver. support only '&self'",
             ))
         }
+    }
+}
+
+impl Parse for ElementType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let ident = input.parse::<Ident>()?;
+
+        let type_param = if input.peek(Token![<]) {
+            Some(input.parse::<ElementTypeParam>()?)
+        } else {
+            None
+        };
+
+        Ok(Self { ident, type_param })
+    }
+}
+
+impl Parse for ElementTypeParam {
+    fn parse(input: ParseStream) -> Result<Self> {
+        println!("lt_token before");
+
+        let lt_token = input.parse::<Token![<]>()?;
+
+        println!("lt_token after");
+
+        let params = parse_punct_idents(&input)?;
+
+        println!("params after");
+
+        let gt_token = input.parse::<Token![>]>()?;
+
+        Ok(Self {
+            lt_token,
+            params,
+            gt_token,
+        })
     }
 }
 
@@ -227,6 +267,19 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         #trait_gen
         #from_impls
     })
+}
+
+fn parse_punct_idents(input: &ParseStream) -> Result<Punctuated<Ident, Token![,]>> {
+    let mut res = Punctuated::new();
+
+    res.push_value(input.parse::<Ident>()?);
+
+    while input.is_empty().not() && input.peek(Token![,]) {
+        res.push_punct(input.parse::<Token![,]>()?);
+        res.push_value(input.parse::<Ident>()?);
+    }
+
+    Ok(res)
 }
 
 fn to_element_name(inner_type: &Ident) -> Ident {
@@ -316,6 +369,59 @@ mod tests {
 
     fn parse_func(input: TokenStream) -> Signature {
         syn::parse2(input).unwrap()
+    }
+
+    #[test]
+    fn element_typeparam() {
+        let input = quote! { <A, B, C> };
+
+        if let Ok(x) = syn::parse2::<ElementTypeParam>(input) {
+            assert_eq!(3, x.params.len());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn element_typeparam_last_comma() {
+        let input = quote! { <A, B,> };
+
+        let r = syn::parse2::<ElementTypeParam>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn element_typeparam_restrict() {
+        let input = quote! { <A, B, C: Clone> };
+
+        let r = syn::parse2::<ElementTypeParam>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn element_basic() {
+        let input = quote! { Elem1 };
+
+        if let Ok(x) = syn::parse2::<ElementType>(input) {
+            assert_eq!("Elem1", x.ident.to_string());
+            assert!(x.type_param.is_none());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn element_generics() {
+        let input = quote! { Elem1<A, B> };
+
+        if let Ok(x) = syn::parse2::<ElementType>(input) {
+            assert_eq!("Elem1", x.ident.to_string());
+            assert!(x.type_param.is_some());
+        } else {
+            assert!(false, "parse error");
+        }
     }
 
     #[test]
