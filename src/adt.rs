@@ -97,17 +97,15 @@ impl Parse for AdtType {
             elements.push(input.parse::<ElementType>()?);
         }
 
-        if elements.len() >= 2 {
-            Ok(Self {
-                name,
-                generics,
-                elements,
-                derive_def,
-                trait_def,
-            })
-        } else {
-            Err(Error::new(input.span(), "must 2 elements or more"))
-        }
+        validate_elements(input, &elements)?;
+
+        Ok(Self {
+            name,
+            generics,
+            elements,
+            derive_def,
+            trait_def,
+        })
     }
 }
 
@@ -291,6 +289,26 @@ fn parse_punct_idents(input: &ParseStream) -> Result<Punctuated<Ident, Token![,]
     }
 
     Ok(res)
+}
+
+fn validate_elements(input: ParseStream, elements: &Vec<ElementType>) -> Result<()> {
+    if elements.len() >= 2 {
+        let mut tmp: Vec<String> = Vec::new();
+
+        for x in elements {
+            let name = x.ident.to_string();
+
+            if tmp.contains(&name) {
+                return Err(Error::new(input.span(), "duplicate element"));
+            }
+
+            tmp.push(name);
+        }
+
+        Ok(())
+    } else {
+        Err(Error::new(input.span(), "must 2 elements or more"))
+    }
 }
 
 fn to_element_name(inner_type: &Ident) -> Ident {
@@ -586,6 +604,42 @@ mod tests {
 
         let r2 = syn::parse2::<AdtType>(quote! { Data = Data1 | Data2 | });
         assert!(r2.is_err());
+    }
+
+    #[test]
+    fn duplicate_elements_simple() {
+        let input = quote! { Data = Data1 | Data1 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn duplicate_elements() {
+        let input = quote! { Data = Data1 | Data2 | Data1 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn duplicate_elements_generics() {
+        let input = quote! { Data<A> = Data1<A> | Data2 | Data1<A> };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn duplicate_elements_diff_generics() {
+        let input = quote! { Data<A> = Data1<A> | Data2 | Data1<i32> };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
     }
 
     #[test]
