@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
-use syn::{Error, FnArg, Generics, Ident, Signature, Token, TraitItemFn, braced};
+use syn::{Error, FnArg, Generics, Ident, Signature, Token, TraitItemFn, WhereClause, braced};
 
 use std::ops::Not;
 
@@ -24,6 +24,8 @@ struct AdtDeriveType {
 
 struct AdtTraitType {
     name: Ident,
+    generics: Option<Generics>,
+    where_clause: Option<WhereClause>,
     functions: Vec<TraitItemFn>,
 }
 
@@ -41,11 +43,12 @@ impl AdtTraitType {
 impl Parse for AdtType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
-        let mut generics = None;
 
-        if input.peek(Token![<]) {
-            generics = Some(input.parse::<Generics>()?);
-        }
+        let generics = if input.peek(Token![<]) {
+            Some(input.parse::<Generics>()?)
+        } else {
+            None
+        };
 
         input.parse::<Token![=]>()?;
 
@@ -115,6 +118,18 @@ impl Parse for AdtTraitType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
 
+        let generics = if input.peek(Token![<]) {
+            Some(input.parse::<Generics>()?)
+        } else {
+            None
+        };
+
+        let where_clause = if input.peek(Token![where]) {
+            Some(input.parse::<WhereClause>()?)
+        } else {
+            None
+        };
+
         let body;
         braced!(body in input);
 
@@ -125,7 +140,12 @@ impl Parse for AdtTraitType {
         }
 
         if Self::check_receiver(&functions) {
-            Ok(AdtTraitType { name, functions })
+            Ok(AdtTraitType {
+                name,
+                generics,
+                where_clause,
+                functions,
+            })
         } else {
             Err(Error::new(
                 input.span(),
@@ -539,14 +559,58 @@ mod tests {
     #[test]
     fn with_generics_trait() {
         let input = quote! {
-            Data = Data1 | Data2 with DataFunc<T> {
+            Data = Data1 | Data2 with DataFunc<A, B> {
                 fn func1(&self, p: T) -> String;
             }
         };
 
         let r = syn::parse2::<AdtType>(input);
 
-        assert!(r.is_err());
+        if let Ok(a) = r {
+            assert!(a.trait_def.is_some());
+
+            let tr = a.trait_def.unwrap();
+
+            assert_eq!(
+                quote! {<A, B>}.to_string(),
+                tr.generics.to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn with_generics_trait_where() {
+        let input = quote! {
+            Data = Data1 | Data2 with DataFunc<A, B>
+            where
+                A: Clone,
+                B: Clone + Copy + PartialEq,
+            {
+                fn func1(&self, p: T) -> String;
+            }
+        };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        if let Ok(a) = r {
+            assert!(a.trait_def.is_some());
+
+            let tr = a.trait_def.unwrap();
+
+            assert_eq!(
+                quote! {
+                    where
+                        A: Clone,
+                        B: Clone + Copy + PartialEq,
+                }
+                .to_string(),
+                tr.where_clause.to_token_stream().to_string()
+            );
+        } else {
+            assert!(false, "parse error");
+        }
     }
 
     #[test]
