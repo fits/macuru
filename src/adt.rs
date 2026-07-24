@@ -3,7 +3,9 @@ use quote::{ToTokens, format_ident, quote};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
-use syn::{Error, FnArg, Generics, Ident, Signature, Token, TraitItemFn, WhereClause, braced};
+use syn::{
+    Error, FnArg, Generics, Ident, PathSegment, Signature, Token, TraitItemFn, WhereClause, braced,
+};
 
 use std::ops::Not;
 
@@ -205,14 +207,18 @@ impl ToTokens for GenericTypeParam {
     }
 }
 
-struct SelfTypeEditor(Ident);
+struct SelfTypeEditor {
+    ident: Ident,
+    generics: Option<Generics>,
+}
 
 impl Fold for SelfTypeEditor {
     fn fold_path_segment(&mut self, i: syn::PathSegment) -> syn::PathSegment {
         if i.ident.to_string() == "Self" {
-            let mut res = i.clone();
-            res.ident = self.0.clone();
-            res
+            let ident = &self.ident;
+            let generics = &self.generics;
+
+            syn::parse2::<PathSegment>(quote! { #ident #generics }).unwrap()
         } else {
             syn::fold::fold_path_segment(self, i)
         }
@@ -231,6 +237,16 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let mut elements_def = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
+    let mut impl_typeparam = None;
+    let mut enum_typeparam = None;
+
+    if let Some(g) = &generics {
+        let (impl_gen, type_gen, _) = g.split_for_impl();
+
+        impl_typeparam = Some(impl_gen);
+        enum_typeparam = Some(type_gen);
+    }
+
     for x in &elements {
         let enum_element = to_element_name(&x.ident);
 
@@ -242,16 +258,16 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         from_impls = quote! {
             #from_impls
 
-            impl From<#x> for #ident {
+            impl #impl_typeparam From<#x> for #ident #enum_typeparam {
                 fn from(v: #x) -> Self {
                     Self::#enum_element(v)
                 }
             }
 
-            impl TryFrom<#ident> for #x {
+            impl #impl_typeparam TryFrom<#ident #enum_typeparam> for #x {
                 type Error = ();
 
-                fn try_from(v: #ident) -> Result<Self, Self::Error> {
+                fn try_from(v: #ident #enum_typeparam) -> Result<Self, Self::Error> {
                     if let #ident::#enum_element(x) = v {
                         Ok(x)
                     } else {
@@ -265,12 +281,12 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
 
     let trait_gen = trait_def
-        .map(|x| trait_generate(&ident, &elements, x))
+        .map(|x| trait_generate(&ident, generics.clone(), &elements, x))
         .unwrap_or_default();
 
     Ok(quote! {
         #derive_gen
-        pub enum #ident {
+        pub enum #ident #enum_typeparam {
             #elements_def
         }
 
@@ -366,10 +382,10 @@ fn to_element_name(inner_type: &Ident) -> Ident {
     format_ident!("{}_", inner_type)
 }
 
-fn edit_self_return_type(sig: &Signature, replace_name: &Ident) -> Signature {
+fn edit_self_return_type(sig: &Signature, ident: Ident, generics: Option<Generics>) -> Signature {
     let mut res = sig.clone();
 
-    let mut editor = SelfTypeEditor(replace_name.clone());
+    let mut editor = SelfTypeEditor { ident, generics };
 
     res.output = editor.fold_return_type(res.output);
 
@@ -381,15 +397,28 @@ fn derive_generate(dt: AdtDeriveType) -> TokenStream {
     quote! { #[derive(#derive_args)] }
 }
 
-fn trait_generate(name: &Ident, elements: &Vec<ElementType>, tt: AdtTraitType) -> TokenStream {
+fn trait_generate(
+    enum_name: &Ident,
+    generics: Option<Generics>,
+    elements: &Vec<ElementType>,
+    tt: AdtTraitType,
+) -> TokenStream {
     let trait_name = tt.ident;
+    let trait_typeparam = tt.type_param;
+
+    let enum_type_param = generics.clone().map(|x| {
+        let (_, type_gen, _) = x.split_for_impl();
+        quote! { #type_gen }
+    });
+
+    let type_hint = enum_type_param.clone().map(|x| quote! { ::#x });
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
 
     for f in tt.functions {
         let mut f = f.clone();
-        f.sig = edit_self_return_type(&f.sig, name);
+        f.sig = edit_self_return_type(&f.sig, enum_name.clone(), generics.clone());
 
         trait_func = quote! {
             #trait_func
@@ -416,7 +445,7 @@ fn trait_generate(name: &Ident, elements: &Vec<ElementType>, tt: AdtTraitType) -
 
             quote! {
                 #acc
-                Self::#enum_element(x) => #trait_name::#func_name(#func_args),
+                Self::#enum_element(x) => #trait_name #type_hint::#func_name(#func_args),
             }
         });
 
@@ -431,12 +460,19 @@ fn trait_generate(name: &Ident, elements: &Vec<ElementType>, tt: AdtTraitType) -
         }
     }
 
+    let impl_generics = generics.map(|x| {
+        let (impl_gen, _, _) = x.split_for_impl();
+        quote! { #impl_gen }
+    });
+
+    let where_clause = tt.where_clause;
+
     quote! {
-        pub trait #trait_name {
+        pub trait #trait_name #trait_typeparam {
             #trait_func
         }
 
-        impl #trait_name for #name {
+        impl #impl_generics #trait_name #trait_typeparam for #enum_name #enum_type_param #where_clause {
             #trait_impl
         }
     }
@@ -1144,7 +1180,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> bool }.to_string(),
-            edit_self_return_type(&f1, &name)
+            edit_self_return_type(&f1, name.clone(), None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1153,7 +1189,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> Option<(bool, String, i32)> }.to_string(),
-            edit_self_return_type(&f2, &name)
+            edit_self_return_type(&f2, name, None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1167,7 +1203,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> TEST }.to_string(),
-            edit_self_return_type(&f1, &name)
+            edit_self_return_type(&f1, name, None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1181,7 +1217,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> (TEST,) }.to_string(),
-            edit_self_return_type(&f1, &name)
+            edit_self_return_type(&f1, name.clone(), None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1190,7 +1226,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func2() -> (bool, TEST, i32) }.to_string(),
-            edit_self_return_type(&f2, &name)
+            edit_self_return_type(&f2, name.clone(), None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1199,7 +1235,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func3() -> (bool, TEST, (i32, String, TEST)) }.to_string(),
-            edit_self_return_type(&f3, &name)
+            edit_self_return_type(&f3, name, None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1213,7 +1249,7 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> Result<Option<(bool, TEST)>, ()> }.to_string(),
-            edit_self_return_type(&f1, &name)
+            edit_self_return_type(&f1, name, None)
                 .to_token_stream()
                 .to_string()
         );
@@ -1227,7 +1263,23 @@ mod tests {
 
         assert_eq!(
             quote! { fn func1() -> impl Fn(i32) -> Option<(bool, TEST)> }.to_string(),
-            edit_self_return_type(&f1, &name)
+            edit_self_return_type(&f1, name, None)
+                .to_token_stream()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn return_type_with_self_in_type_generics() {
+        let name = format_ident!("TEST");
+
+        let generics = syn::parse2::<Generics>(quote! { <A, B> }).ok();
+
+        let f1 = parse_func(quote! { fn func1() -> Result<Option<(bool, Self)>, ()> });
+
+        assert_eq!(
+            quote! { fn func1() -> Result<Option<(bool, TEST<A, B>)>, ()> }.to_string(),
+            edit_self_return_type(&f1, name, generics)
                 .to_token_stream()
                 .to_string()
         );
@@ -1672,6 +1724,108 @@ mod tests {
                         type Error = ();
 
                         fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_generics() {
+        let input = quote! {
+            Data<A, B> = Elem1<A> | Elem2<A, B> derive Debug with DataFunc<A, B>
+            where
+                A: Clone,
+                B: Copy + Default + PartialOrd + Add<Output = B>,
+            {
+                fn id(&self) -> A;
+                fn value(&self) -> B;
+                fn add(&self, v: B) -> Option<Self>;
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Debug)]
+                    pub enum Data<A, B> {
+                        Elem1_(Elem1<A>),
+                        Elem2_(Elem2<A, B>),
+                    }
+
+                    pub trait DataFunc<A, B> {
+                        fn id(&self) -> A;
+                        fn value(&self) -> B;
+                        fn add(&self, v: B) -> Option< Data<A, B> >;
+                    }
+
+                    impl<A, B> DataFunc<A, B> for Data<A, B>
+                    where
+                        A: Clone,
+                        B: Copy + Default + PartialOrd + Add<Output = B>,
+                    {
+                        fn id(&self) -> A {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<A, B>::id(x),
+                                Self::Elem2_(x) => DataFunc::<A, B>::id(x),
+                            }
+                        }
+
+                        fn value(&self) -> B {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<A, B>::value(x),
+                                Self::Elem2_(x) => DataFunc::<A, B>::value(x),
+                            }
+                        }
+
+                        fn add(&self, v: B) -> Option< Data<A, B> > {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<A, B>::add(x, v),
+                                Self::Elem2_(x) => DataFunc::<A, B>::add(x, v),
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem1<A> > for Data<A, B> {
+                        fn from(v: Elem1<A>) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem1<A> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem2<A, B> > for Data<A, B> {
+                        fn from(v: Elem2<A, B>) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem2<A, B> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
                             if let Data::Elem2_(x) = v {
                                 Ok(x)
                             } else {
