@@ -11,7 +11,7 @@ syn::custom_keyword!(derive);
 syn::custom_keyword!(with);
 
 struct AdtType {
-    name: Ident,
+    ident: Ident,
     generics: Option<Generics>,
     elements: Vec<ElementType>,
     derive_def: Option<AdtDeriveType>,
@@ -23,7 +23,7 @@ struct AdtDeriveType {
 }
 
 struct AdtTraitType {
-    name: Ident,
+    ident: Ident,
     type_param: Option<GenericTypeParam>,
     where_clause: Option<WhereClause>,
     functions: Vec<TraitItemFn>,
@@ -53,7 +53,7 @@ impl AdtTraitType {
 
 impl Parse for AdtType {
     fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?;
+        let ident = input.parse::<Ident>()?;
 
         let generics = if input.peek(Token![<]) {
             Some(input.parse::<Generics>()?)
@@ -101,7 +101,7 @@ impl Parse for AdtType {
         validate_generics(input, &generics, &elements, &trait_def)?;
 
         Ok(Self {
-            name,
+            ident,
             generics,
             elements,
             derive_def,
@@ -120,7 +120,7 @@ impl Parse for AdtDeriveType {
 
 impl Parse for AdtTraitType {
     fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?;
+        let ident = input.parse::<Ident>()?;
 
         let type_param = if input.peek(Token![<]) {
             Some(input.parse::<GenericTypeParam>()?)
@@ -145,7 +145,7 @@ impl Parse for AdtTraitType {
 
         if Self::check_receiver(&functions) {
             Ok(AdtTraitType {
-                name,
+                ident,
                 type_param,
                 where_clause,
                 functions,
@@ -221,7 +221,7 @@ impl Fold for SelfTypeEditor {
 
 pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let AdtType {
-        name,
+        ident,
         generics,
         elements,
         derive_def,
@@ -242,17 +242,17 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         from_impls = quote! {
             #from_impls
 
-            impl From<#x> for #name {
+            impl From<#x> for #ident {
                 fn from(v: #x) -> Self {
                     Self::#enum_element(v)
                 }
             }
 
-            impl TryFrom<#name> for #x {
+            impl TryFrom<#ident> for #x {
                 type Error = ();
 
-                fn try_from(v: #name) -> Result<Self, Self::Error> {
-                    if let #name::#enum_element(x) = v {
+                fn try_from(v: #ident) -> Result<Self, Self::Error> {
+                    if let #ident::#enum_element(x) = v {
                         Ok(x)
                     } else {
                         Err(())
@@ -265,12 +265,12 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
 
     let trait_gen = trait_def
-        .map(|x| trait_generate(&name, &elements, x))
+        .map(|x| trait_generate(&ident, &elements, x))
         .unwrap_or_default();
 
     Ok(quote! {
         #derive_gen
-        pub enum #name {
+        pub enum #ident {
             #elements_def
         }
 
@@ -382,7 +382,7 @@ fn derive_generate(dt: AdtDeriveType) -> TokenStream {
 }
 
 fn trait_generate(name: &Ident, elements: &Vec<ElementType>, tt: AdtTraitType) -> TokenStream {
-    let trait_name = tt.name;
+    let trait_name = tt.ident;
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
@@ -531,7 +531,7 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
 
             assert_eq!(
@@ -864,7 +864,7 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
             assert!(a.derive_def.is_some());
             assert_eq!(1, a.derive_def.unwrap().derives.len());
@@ -885,7 +885,7 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
             assert!(a.derive_def.is_some());
             assert_eq!(3, a.derive_def.unwrap().derives.len());
@@ -963,14 +963,14 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
             let tr = a.trait_def.unwrap();
 
-            assert_eq!("DataImpl", tr.name.to_string());
+            assert_eq!("DataImpl", tr.ident.to_string());
 
             assert_eq!(1, tr.functions.len());
 
@@ -994,14 +994,14 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
             let tr = a.trait_def.unwrap();
 
-            assert_eq!("DataImpl", tr.name.to_string());
+            assert_eq!("DataImpl", tr.ident.to_string());
 
             assert_eq!(1, tr.functions.len());
 
@@ -1026,14 +1026,14 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_some());
 
             let tr = a.trait_def.unwrap();
 
-            assert_eq!("DataFunc", tr.name.to_string());
+            assert_eq!("DataFunc", tr.ident.to_string());
             assert_eq!(2, tr.functions.len());
 
             assert_eq!(
@@ -1085,7 +1085,7 @@ mod tests {
         let r = syn::parse2::<AdtType>(input);
 
         if let Ok(a) = r {
-            assert_eq!("Data", a.name.to_string());
+            assert_eq!("Data", a.ident.to_string());
             assert_eq!(2, a.elements.len());
 
             assert!(a.trait_def.is_none());
