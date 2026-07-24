@@ -24,7 +24,7 @@ struct AdtDeriveType {
 
 struct AdtTraitType {
     name: Ident,
-    generics: Option<Generics>,
+    type_param: Option<GenericTypeParam>,
     where_clause: Option<WhereClause>,
     functions: Vec<TraitItemFn>,
 }
@@ -122,8 +122,8 @@ impl Parse for AdtTraitType {
     fn parse(input: ParseStream) -> Result<Self> {
         let name = input.parse::<Ident>()?;
 
-        let generics = if input.peek(Token![<]) {
-            Some(input.parse::<Generics>()?)
+        let type_param = if input.peek(Token![<]) {
+            Some(input.parse::<GenericTypeParam>()?)
         } else {
             None
         };
@@ -146,7 +146,7 @@ impl Parse for AdtTraitType {
         if Self::check_receiver(&functions) {
             Ok(AdtTraitType {
                 name,
-                generics,
+                type_param,
                 where_clause,
                 functions,
             })
@@ -325,33 +325,24 @@ fn validate_generics(
             .collect::<Vec<_>>();
 
         if let Some(t) = trait_def
-            && let Some(g) = &t.generics
+            && let Some(g) = &t.type_param
         {
-            let mut is_ok = true;
+            for p in &g.params {
+                let gty = p.to_string();
 
-            for t in g.type_params() {
-                let trg = t.ident.to_string();
-
-                if g_types.contains(&trg) {
-                    g_types.retain(|x| x != &trg);
+                if g_types.contains(&gty) {
+                    g_types.retain(|x| x != &gty);
                 } else {
-                    is_ok = false;
+                    return Err(Error::new(input.span(), "invalid type parameters in trait"));
                 }
-            }
-
-            if is_ok.not() {
-                return Err(Error::new(
-                    input.span(),
-                    "undefined type parameters in trait",
-                ));
             }
         }
 
         for el in elements {
             if let Some(t) = &el.type_param {
-                for p in t.params.pairs() {
-                    let trg = p.value().to_string();
-                    g_types.retain(|x| x != &trg);
+                for p in &t.params {
+                    let gty = p.to_string();
+                    g_types.retain(|x| x != &gty);
                 }
             }
         }
@@ -360,7 +351,7 @@ fn validate_generics(
             return Err(Error::new(input.span(), "unused type parameters"));
         }
     } else if let Some(t) = trait_def
-        && t.generics.is_some()
+        && t.type_param.is_some()
     {
         return Err(Error::new(
             input.span(),
@@ -921,7 +912,7 @@ mod tests {
 
             assert_eq!(
                 quote! {<A, B>}.to_string(),
-                tr.generics.to_token_stream().to_string()
+                tr.type_param.to_token_stream().to_string()
             );
         } else {
             assert!(false, "parse error");
