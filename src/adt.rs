@@ -31,10 +31,10 @@ struct AdtTraitType {
 
 struct ElementType {
     ident: Ident,
-    type_param: Option<ElementTypeParam>,
+    type_param: Option<GenericTypeParam>,
 }
 
-struct ElementTypeParam {
+struct GenericTypeParam {
     lt_token: Token![<],
     params: Punctuated<Ident, Token![,]>,
     gt_token: Token![>],
@@ -164,7 +164,7 @@ impl Parse for ElementType {
         let ident = input.parse::<Ident>()?;
 
         let type_param = if input.peek(Token![<]) {
-            Some(input.parse::<ElementTypeParam>()?)
+            Some(input.parse::<GenericTypeParam>()?)
         } else {
             None
         };
@@ -173,7 +173,7 @@ impl Parse for ElementType {
     }
 }
 
-impl Parse for ElementTypeParam {
+impl Parse for GenericTypeParam {
     fn parse(input: ParseStream) -> Result<Self> {
         let lt_token = input.parse::<Token![<]>()?;
         let params = parse_punct_idents(&input)?;
@@ -197,7 +197,7 @@ impl ToTokens for ElementType {
     }
 }
 
-impl ToTokens for ElementTypeParam {
+impl ToTokens for GenericTypeParam {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.lt_token.to_tokens(tokens);
         self.params.to_tokens(tokens);
@@ -464,7 +464,7 @@ mod tests {
     fn element_typeparam() {
         let input = quote! { <A, B, C> };
 
-        if let Ok(x) = syn::parse2::<ElementTypeParam>(input) {
+        if let Ok(x) = syn::parse2::<GenericTypeParam>(input) {
             assert_eq!(3, x.params.len());
             assert_eq!(
                 quote! {<A, B, C>}.to_string(),
@@ -479,7 +479,7 @@ mod tests {
     fn element_typeparam_last_comma() {
         let input = quote! { <A, B,> };
 
-        let r = syn::parse2::<ElementTypeParam>(input);
+        let r = syn::parse2::<GenericTypeParam>(input);
 
         assert!(r.is_err());
     }
@@ -488,7 +488,7 @@ mod tests {
     fn element_typeparam_restrict() {
         let input = quote! { <A, B, C: Clone> };
 
-        let r = syn::parse2::<ElementTypeParam>(input);
+        let r = syn::parse2::<GenericTypeParam>(input);
 
         assert!(r.is_err());
     }
