@@ -98,6 +98,7 @@ impl Parse for AdtType {
         }
 
         validate_elements(input, &elements)?;
+        validate_generics(input, &generics, &elements, &trait_def)?;
 
         Ok(Self {
             name,
@@ -311,6 +312,65 @@ fn validate_elements(input: ParseStream, elements: &Vec<ElementType>) -> Result<
     }
 }
 
+fn validate_generics(
+    input: ParseStream,
+    generics: &Option<Generics>,
+    elements: &Vec<ElementType>,
+    trait_def: &Option<AdtTraitType>,
+) -> Result<()> {
+    if let Some(g) = generics {
+        let mut g_types = g
+            .type_params()
+            .map(|x| x.ident.to_string())
+            .collect::<Vec<_>>();
+
+        if let Some(t) = trait_def
+            && let Some(g) = &t.generics
+        {
+            let mut is_ok = true;
+
+            for t in g.type_params() {
+                let trg = t.ident.to_string();
+
+                if g_types.contains(&trg) {
+                    g_types.retain(|x| x != &trg);
+                } else {
+                    is_ok = false;
+                }
+            }
+
+            if is_ok.not() {
+                return Err(Error::new(
+                    input.span(),
+                    "undefined type parameters in trait",
+                ));
+            }
+        }
+
+        for el in elements {
+            if let Some(t) = &el.type_param {
+                for p in t.params.pairs() {
+                    let trg = p.value().to_string();
+                    g_types.retain(|x| x != &trg);
+                }
+            }
+        }
+
+        if g_types.len() > 0 {
+            return Err(Error::new(input.span(), "unused type parameters"));
+        }
+    } else if let Some(t) = trait_def
+        && t.generics.is_some()
+    {
+        return Err(Error::new(
+            input.span(),
+            "undefined type parameters in trait",
+        ));
+    }
+
+    Ok(())
+}
+
 fn to_element_name(inner_type: &Ident) -> Ident {
     format_ident!("{}_", inner_type)
 }
@@ -502,7 +562,7 @@ mod tests {
 
     #[test]
     fn generics_enum() {
-        let input = quote! { Data<T> = Elem1 | Elem2 };
+        let input = quote! { Data<T> = Elem1 | Elem2<T> };
 
         let r = syn::parse2::<AdtType>(input);
 
@@ -520,7 +580,7 @@ mod tests {
 
     #[test]
     fn generics_enum_type_params() {
-        let input = quote! { Data<A, B, C: Clone> = Elem1 | Elem2 };
+        let input = quote! { Data<A, B, C: Clone> = Elem1<A> | Elem2<B, C> };
 
         let r = syn::parse2::<AdtType>(input);
 
@@ -540,25 +600,107 @@ mod tests {
     }
 
     #[test]
-    fn generics_enum_with_where() {
-        let input = quote! {
-            Data<A, B> where = Elem1 | Elem2
-        };
+    fn generics_enum_with_invalid_where() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> where = Elem1<A> | Elem2<B>
+        });
+        assert!(r1.is_err(), "check1");
 
-        let r = syn::parse2::<AdtType>(input);
-
-        assert!(r.is_err());
+        let r2 = syn::parse2::<AdtType>(quote! {
+            Data<A> where A: Debug = Elem1 | Elem2<A>
+        });
+        assert!(r2.is_err(), "check2");
     }
 
     #[test]
-    fn generics_enum_with_where_single() {
-        let input = quote! {
-            Data<A> where A: Debug = Elem1 | Elem2
-        };
+    fn generics_enum_alluse_type() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1<A> | Elem2<B>
+        });
+        assert!(r1.is_ok(), "check1");
 
-        let r = syn::parse2::<AdtType>(input);
+        let r2 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1 | Elem2<A, B> with DataFunc<A, B> {
+                fn func1(&self) -> Self;
+            }
+        });
+        assert!(r2.is_ok(), "check2");
 
-        assert!(r.is_err());
+        let r3 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1<A> | Elem2<i32> with DataFunc<B> {
+                fn func1(&self, v: B);
+            }
+        });
+        assert!(r3.is_ok(), "check3");
+
+        let r4 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1<A> | Elem2<i32> with DataFunc<A, B> {
+                fn func1(&self, v: B) -> Self;
+            }
+        });
+        assert!(r4.is_ok(), "check4");
+
+        let r5 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1 | Elem2 with DataFunc<A, B> {
+                fn func1(&self, v1: A, v2: B);
+            }
+        });
+        assert!(r5.is_ok(), "check5");
+    }
+
+    #[test]
+    fn generics_enum_nouse_type() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1<A> | Elem2
+        });
+        assert!(r1.is_err(), "check1");
+    }
+
+    #[test]
+    fn generics_enum_duplicate_type_in_trait() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A, B> = Elem1<A> | Elem2 with DataFunc<B, A, B> {
+                fn func1(&self, v: B);
+            }
+        });
+        assert!(r1.is_err(), "check1");
+    }
+
+    #[test]
+    fn generics_enum_use_undefined_type_in_trait() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A> = Elem1<A> | Elem2 with DataFunc<B> {
+                fn func1(&self, v: B);
+            }
+        });
+        assert!(r1.is_err(), "check1");
+
+        let r2 = syn::parse2::<AdtType>(quote! {
+            Data<A> = Elem1<A> | Elem2 with DataFunc<i32, bool> {
+                fn func1(&self, v1: i32, v2: bool);
+            }
+        });
+        assert!(r2.is_err(), "check2");
+
+        let r3 = syn::parse2::<AdtType>(quote! {
+            Data = Elem1 | Elem2 with DataFunc<A> {
+                fn func1(&self, v: A);
+            }
+        });
+        assert!(r3.is_err(), "check3");
+    }
+
+    #[test]
+    fn generics_enum_use_unknown_type_in_element() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Data<A> = Elem1<A> | Elem2<T, S>
+        });
+        assert!(r1.is_ok(), "check1");
+
+        let r2 = syn::parse2::<AdtType>(quote! {
+            Data = Elem1<A> | Elem2<B>
+        });
+        assert!(r2.is_ok(), "check2");
     }
 
     #[test]
@@ -765,8 +907,8 @@ mod tests {
     #[test]
     fn with_generics_trait() {
         let input = quote! {
-            Data = Data1 | Data2 with DataFunc<A, B> {
-                fn func1(&self, p: T) -> String;
+            Data<A, B> = Data1 | Data2 with DataFunc<A, B> {
+                fn func1(&self, p: bool) -> String;
             }
         };
 
@@ -789,12 +931,12 @@ mod tests {
     #[test]
     fn with_generics_trait_where() {
         let input = quote! {
-            Data = Data1 | Data2 with DataFunc<A, B>
+            Data<A, B> = Data1 | Data2 with DataFunc<A, B>
             where
                 A: Clone,
                 B: Clone + Copy + PartialEq,
             {
-                fn func1(&self, p: T) -> String;
+                fn func1(&self, p: i32) -> String;
             }
         };
 
