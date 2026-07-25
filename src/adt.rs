@@ -460,7 +460,7 @@ fn trait_generate(
         let func_sig = f.sig;
         let func_name = &func_sig.ident;
 
-        let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x }, |acc, x| {
+        let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x__ }, |acc, x| {
             if let FnArg::Typed(t) = x {
                 let v = &t.pat;
 
@@ -477,7 +477,7 @@ fn trait_generate(
 
             quote! {
                 #acc
-                Self::#enum_element(x) => #trait_name #type_hint::#func_name(#func_args),
+                Self::#enum_element(x__) => #trait_name #type_hint::#func_name(#func_args),
             }
         });
 
@@ -1475,8 +1475,8 @@ mod tests {
                     impl DataImpl for Data {
                         fn func1(&self, a: isize, b: String) {
                             match self {
-                                Self::Elem1_(x) => DataImpl::func1(x, a, b),
-                                Self::Elem2_(x) => DataImpl::func1(x, a, b),
+                                Self::Elem1_(x__) => DataImpl::func1(x__, a, b),
+                                Self::Elem2_(x__) => DataImpl::func1(x__, a, b),
                             }
                         }
                     }
@@ -1551,8 +1551,8 @@ mod tests {
                     impl DataImpl for Data {
                         fn func1(&self, a: isize, b: String) {
                             match self {
-                                Self::Elem1_(x) => DataImpl::func1(x, a, b),
-                                Self::Elem2_(x) => DataImpl::func1(x, a, b),
+                                Self::Elem1_(x__) => DataImpl::func1(x__, a, b),
+                                Self::Elem2_(x__) => DataImpl::func1(x__, a, b),
                             }
                         }
                     }
@@ -1628,15 +1628,15 @@ mod tests {
                     impl DataFunc for Data {
                         fn func1(&self) {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func1(x),
-                                Self::Elem2_(x) => DataFunc::func1(x),
+                                Self::Elem1_(x__) => DataFunc::func1(x__),
+                                Self::Elem2_(x__) => DataFunc::func1(x__),
                             }
                         }
 
                         fn func2(&self, a: isize) -> bool {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func2(x, a),
-                                Self::Elem2_(x) => DataFunc::func2(x, a),
+                                Self::Elem1_(x__) => DataFunc::func2(x__, a),
+                                Self::Elem2_(x__) => DataFunc::func2(x__, a),
                             }
                         }
                     }
@@ -1717,29 +1717,29 @@ mod tests {
                     impl DataFunc for Data {
                         fn func1(&self) {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func1(x),
-                                Self::Elem2_(x) => DataFunc::func1(x),
+                                Self::Elem1_(x__) => DataFunc::func1(x__),
+                                Self::Elem2_(x__) => DataFunc::func1(x__),
                             }
                         }
 
                         fn func2(&self, a: isize) -> Data {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func2(x, a),
-                                Self::Elem2_(x) => DataFunc::func2(x, a),
+                                Self::Elem1_(x__) => DataFunc::func2(x__, a),
+                                Self::Elem2_(x__) => DataFunc::func2(x__, a),
                             }
                         }
 
                         fn func3(&self, a: String, b: bool) -> (Data, isize) {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func3(x, a, b),
-                                Self::Elem2_(x) => DataFunc::func3(x, a, b),
+                                Self::Elem1_(x__) => DataFunc::func3(x__, a, b),
+                                Self::Elem2_(x__) => DataFunc::func3(x__, a, b),
                             }
                         }
 
                         fn func4(&self, a: f32) -> Result<(Data, String, isize), ()> {
                             match self {
-                                Self::Elem1_(x) => DataFunc::func4(x, a),
-                                Self::Elem2_(x) => DataFunc::func4(x, a),
+                                Self::Elem1_(x__) => DataFunc::func4(x__, a),
+                                Self::Elem2_(x__) => DataFunc::func4(x__, a),
                             }
                         }
                     }
@@ -1826,22 +1826,22 @@ mod tests {
                     {
                         fn id(&self) -> A {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<A, B>::id(x),
-                                Self::Elem2_(x) => DataFunc::<A, B>::id(x),
+                                Self::Elem1_(x__) => DataFunc::<A, B>::id(x__),
+                                Self::Elem2_(x__) => DataFunc::<A, B>::id(x__),
                             }
                         }
 
                         fn value(&self) -> B {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<A, B>::value(x),
-                                Self::Elem2_(x) => DataFunc::<A, B>::value(x),
+                                Self::Elem1_(x__) => DataFunc::<A, B>::value(x__),
+                                Self::Elem2_(x__) => DataFunc::<A, B>::value(x__),
                             }
                         }
 
                         fn add(&self, v: B) -> Option< Data<A, B> > {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<A, B>::add(x, v),
-                                Self::Elem2_(x) => DataFunc::<A, B>::add(x, v),
+                                Self::Elem1_(x__) => DataFunc::<A, B>::add(x__, v),
+                                Self::Elem2_(x__) => DataFunc::<A, B>::add(x__, v),
                             }
                         }
                     }
@@ -1926,8 +1926,8 @@ mod tests {
                     {
                         fn calc(&self, v: C) -> Option< Data<A, B> > {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<A, B, C>::calc(x, v),
-                                Self::Elem2_(x) => DataFunc::<A, B, C>::calc(x, v),
+                                Self::Elem1_(x__) => DataFunc::<A, B, C>::calc(x__, v),
+                                Self::Elem2_(x__) => DataFunc::<A, B, C>::calc(x__, v),
                             }
                         }
                     }
@@ -2012,8 +2012,8 @@ mod tests {
                     {
                         fn func1(&self, value: C) {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<C>::func1(x, value),
-                                Self::Elem2_(x) => DataFunc::<C>::func1(x, value),
+                                Self::Elem1_(x__) => DataFunc::<C>::func1(x__, value),
+                                Self::Elem2_(x__) => DataFunc::<C>::func1(x__, value),
                             }
                         }
                     }
@@ -2087,8 +2087,8 @@ mod tests {
                     impl<A> DataFunc<A> for Data {
                         fn func1(&self) -> A {
                             match self {
-                                Self::Elem1_(x) => DataFunc::<A>::func1(x),
-                                Self::Elem2_(x) => DataFunc::<A>::func1(x),
+                                Self::Elem1_(x__) => DataFunc::<A>::func1(x__),
+                                Self::Elem2_(x__) => DataFunc::<A>::func1(x__),
                             }
                         }
                     }
