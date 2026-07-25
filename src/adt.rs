@@ -392,13 +392,15 @@ fn validate_generics(
         if g_types.len() > 0 {
             return Err(Error::new(input.span(), "unused type parameters"));
         }
-    } else if let Some(t) = trait_def
-        && t.type_param.is_some()
-    {
-        return Err(Error::new(
-            input.span(),
-            "undefined type parameters in trait",
-        ));
+    } else if let Some(t) = trait_def {
+        if t.type_param.is_some() {
+            return Err(Error::new(
+                input.span(),
+                "undefined type parameters in trait",
+            ));
+        } else if t.where_clause.is_some() {
+            return Err(Error::new(input.span(), "invalid where clause"));
+        }
     }
 
     Ok(())
@@ -785,6 +787,24 @@ mod tests {
         } else {
             assert!(false, "parse error");
         }
+    }
+
+    #[test]
+    fn no_generics_with_where() {
+        let r1 = syn::parse2::<AdtType>(quote! {
+            Node = Node1 | Node2 where A: Clone
+        });
+        assert!(r1.is_err(), "check1");
+
+        let r2 = syn::parse2::<AdtType>(quote! {
+            Node = Node1 | Node2 with NodeFunc
+            where
+                A: Clone,
+            {
+                fn func1(&self);
+            }
+        });
+        assert!(r2.is_err(), "check2");
     }
 
     #[test]
