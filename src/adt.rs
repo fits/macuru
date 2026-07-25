@@ -209,7 +209,7 @@ impl ToTokens for GenericTypeParam {
 
 struct SelfTypeEditor {
     ident: Ident,
-    generics: Option<Generics>,
+    generics: Option<TokenStream>,
 }
 
 impl Fold for SelfTypeEditor {
@@ -237,14 +237,32 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let mut elements_def = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    let mut impl_typeparam = None;
     let mut enum_typeparam = None;
 
     if let Some(g) = &generics {
-        let (impl_gen, type_gen, _) = g.split_for_impl();
+        let el_typeparam = g.type_params().fold(TokenStream::new(), |acc, x| {
+            let gty = &x.ident;
 
-        impl_typeparam = Some(impl_gen);
-        enum_typeparam = Some(type_gen);
+            for el in &elements {
+                if let Some(t) = &el.type_param {
+                    for p in &t.params {
+                        if gty == p {
+                            if acc.is_empty() {
+                                return quote! { #p };
+                            } else {
+                                return quote! { #acc, #p };
+                            }
+                        }
+                    }
+                }
+            }
+
+            acc
+        });
+
+        if el_typeparam.is_empty().not() {
+            enum_typeparam = Some(quote! { < #el_typeparam > });
+        }
     }
 
     for x in &elements {
@@ -258,13 +276,13 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         from_impls = quote! {
             #from_impls
 
-            impl #impl_typeparam From<#x> for #ident #enum_typeparam {
+            impl #enum_typeparam From<#x> for #ident #enum_typeparam {
                 fn from(v: #x) -> Self {
                     Self::#enum_element(v)
                 }
             }
 
-            impl #impl_typeparam TryFrom<#ident #enum_typeparam> for #x {
+            impl #enum_typeparam TryFrom<#ident #enum_typeparam> for #x {
                 type Error = ();
 
                 fn try_from(v: #ident #enum_typeparam) -> Result<Self, Self::Error> {
@@ -281,7 +299,15 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
 
     let trait_gen = trait_def
-        .map(|x| trait_generate(&ident, generics.clone(), &elements, x))
+        .map(|x| {
+            trait_generate(
+                &ident,
+                enum_typeparam.clone(),
+                generics.clone(),
+                &elements,
+                x,
+            )
+        })
         .unwrap_or_default();
 
     Ok(quote! {
@@ -382,7 +408,11 @@ fn to_element_name(inner_type: &Ident) -> Ident {
     format_ident!("{}_", inner_type)
 }
 
-fn edit_self_return_type(sig: &Signature, ident: Ident, generics: Option<Generics>) -> Signature {
+fn edit_self_return_type(
+    sig: &Signature,
+    ident: Ident,
+    generics: Option<TokenStream>,
+) -> Signature {
     let mut res = sig.clone();
 
     let mut editor = SelfTypeEditor { ident, generics };
@@ -399,6 +429,7 @@ fn derive_generate(dt: AdtDeriveType) -> TokenStream {
 
 fn trait_generate(
     enum_name: &Ident,
+    enum_typeparam: Option<TokenStream>,
     generics: Option<Generics>,
     elements: &Vec<ElementType>,
     tt: AdtTraitType,
@@ -406,19 +437,18 @@ fn trait_generate(
     let trait_name = tt.ident;
     let trait_typeparam = tt.type_param;
 
-    let enum_type_param = generics.clone().map(|x| {
-        let (_, type_gen, _) = x.split_for_impl();
-        quote! { #type_gen }
-    });
-
-    let type_hint = enum_type_param.clone().map(|x| quote! { ::#x });
+    let type_hint = if let Some(t) = &trait_typeparam {
+        quote! { ::#t }
+    } else {
+        TokenStream::new()
+    };
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
 
     for f in tt.functions {
         let mut f = f.clone();
-        f.sig = edit_self_return_type(&f.sig, enum_name.clone(), generics.clone());
+        f.sig = edit_self_return_type(&f.sig, enum_name.clone(), enum_typeparam.clone());
 
         trait_func = quote! {
             #trait_func
@@ -472,7 +502,7 @@ fn trait_generate(
             #trait_func
         }
 
-        impl #impl_generics #trait_name #trait_typeparam for #enum_name #enum_type_param #where_clause {
+        impl #impl_generics #trait_name #trait_typeparam for #enum_name #enum_typeparam #where_clause {
             #trait_impl
         }
     }
@@ -1273,13 +1303,11 @@ mod tests {
     fn return_type_with_self_in_type_generics() {
         let name = format_ident!("TEST");
 
-        let generics = syn::parse2::<Generics>(quote! { <A, B> }).ok();
-
         let f1 = parse_func(quote! { fn func1() -> Result<Option<(bool, Self)>, ()> });
 
         assert_eq!(
             quote! { fn func1() -> Result<Option<(bool, TEST<A, B>)>, ()> }.to_string(),
-            edit_self_return_type(&f1, name, generics)
+            edit_self_return_type(&f1, name, Some(quote! { <A, B> }))
                 .to_token_stream()
                 .to_string()
         );
@@ -1826,6 +1854,253 @@ mod tests {
                         type Error = ();
 
                         fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_generics_diff_typeparam() {
+        let input = quote! {
+            Data<A, B, C> = Elem1<A> | Elem2<A, B> derive Debug with DataFunc<A, B, C>
+            where
+                A: Clone,
+                B: Copy + Default + PartialOrd + Add<Output = B>,
+                C: Debug,
+            {
+                fn calc(&self, v: C) -> Option<Self>;
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Debug)]
+                    pub enum Data<A, B> {
+                        Elem1_(Elem1<A>),
+                        Elem2_(Elem2<A, B>),
+                    }
+
+                    pub trait DataFunc<A, B, C> {
+                        fn calc(&self, v: C) -> Option< Data<A, B> >;
+                    }
+
+                    impl<A, B, C> DataFunc<A, B, C> for Data<A, B>
+                    where
+                        A: Clone,
+                        B: Copy + Default + PartialOrd + Add<Output = B>,
+                        C: Debug,
+                    {
+                        fn calc(&self, v: C) -> Option< Data<A, B> > {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<A, B, C>::calc(x, v),
+                                Self::Elem2_(x) => DataFunc::<A, B, C>::calc(x, v),
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem1<A> > for Data<A, B> {
+                        fn from(v: Elem1<A>) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem1<A> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem2<A, B> > for Data<A, B> {
+                        fn from(v: Elem2<A, B>) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem2<A, B> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_generics_diff_typeparam_noself() {
+        let input = quote! {
+            Data<A, B, C> = Elem1<A> | Elem2<A, B> derive Debug with DataFunc<C>
+            where
+                A: Clone,
+                B: Copy + Default + PartialOrd + Add<Output = B>,
+                C: Debug,
+            {
+                fn func1(&self, value: C);
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Debug)]
+                    pub enum Data<A, B> {
+                        Elem1_(Elem1<A>),
+                        Elem2_(Elem2<A, B>),
+                    }
+
+                    pub trait DataFunc<C> {
+                        fn func1(&self, value: C);
+                    }
+
+                    impl<A, B, C> DataFunc<C> for Data<A, B>
+                    where
+                        A: Clone,
+                        B: Copy + Default + PartialOrd + Add<Output = B>,
+                        C: Debug,
+                    {
+                        fn func1(&self, value: C) {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<C>::func1(x, value),
+                                Self::Elem2_(x) => DataFunc::<C>::func1(x, value),
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem1<A> > for Data<A, B> {
+                        fn from(v: Elem1<A>) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem1<A> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl<A, B> From< Elem2<A, B> > for Data<A, B> {
+                        fn from(v: Elem2<A, B>) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl<A, B> TryFrom< Data<A, B> > for Elem2<A, B> {
+                        type Error = ();
+
+                        fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn adt_generate_with_generics_trait_only() {
+        let input = quote! {
+            Data<A> = Elem1 | Elem2 with DataFunc<A> {
+                fn func1(&self) -> A;
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    pub enum Data {
+                        Elem1_(Elem1),
+                        Elem2_(Elem2),
+                    }
+
+                    pub trait DataFunc<A> {
+                        fn func1(&self) -> A;
+                    }
+
+                    impl<A> DataFunc<A> for Data {
+                        fn func1(&self) -> A {
+                            match self {
+                                Self::Elem1_(x) => DataFunc::<A>::func1(x),
+                                Self::Elem2_(x) => DataFunc::<A>::func1(x),
+                            }
+                        }
+                    }
+
+                    impl From<Elem1> for Data {
+                        fn from(v: Elem1) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem1 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl From< Elem2 > for Data {
+                        fn from(v: Elem2) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl TryFrom<Data> for Elem2 {
+                        type Error = ();
+
+                        fn try_from(v: Data) -> Result<Self, Self::Error> {
                             if let Data::Elem2_(x) = v {
                                 Ok(x)
                             } else {
