@@ -361,6 +361,14 @@ fn validate_generics(
     trait_def: &Option<AdtTraitType>,
 ) -> Result<()> {
     if let Some(g) = generics {
+        if g.const_params().next().is_some() {
+            return Err(Error::new(input.span(), "can't use the const generics"));
+        }
+
+        if g.lifetimes().next().is_some() {
+            return Err(Error::new(input.span(), "can't use the lifetimes"));
+        }
+
         let mut g_types = g
             .type_params()
             .map(|x| x.ident.to_string())
@@ -460,17 +468,21 @@ fn trait_generate(
         let func_sig = f.sig;
         let func_name = &func_sig.ident;
 
-        let func_args = func_sig.inputs.iter().skip(1).fold(quote! { x__ }, |acc, x| {
-            if let FnArg::Typed(t) = x {
-                let v = &t.pat;
+        let func_args = func_sig
+            .inputs
+            .iter()
+            .skip(1)
+            .fold(quote! { x__ }, |acc, x| {
+                if let FnArg::Typed(t) = x {
+                    let v = &t.pat;
 
-                quote! {
-                    #acc, #v
+                    quote! {
+                        #acc, #v
+                    }
+                } else {
+                    acc
                 }
-            } else {
-                acc
-            }
-        });
+            });
 
         let func_body = elements.iter().fold(TokenStream::new(), |acc, x| {
             let enum_element = to_element_name(&x.ident);
@@ -635,6 +647,24 @@ mod tests {
         } else {
             assert!(false, "none generics")
         }
+    }
+
+    #[test]
+    fn const_generics_enum() {
+        let input = quote! { Data<const N: usize> = Elem1 | Elem2<N> };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn lifetime_generics_enum() {
+        let input = quote! { Data<'a> = Elem1 | Elem2 };
+
+        let r = syn::parse2::<AdtType>(input);
+
+        assert!(r.is_err());
     }
 
     #[test]
