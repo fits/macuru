@@ -74,6 +74,7 @@ However, please note the following points.
 * method receiver is only ```&self```
 * lifetimes and const cannot be used in generic defintions
 * ```x__``` cannot be used as a method argument
+* ```Self```, container types, and lifetimes cannot be used as type parameters in element types or traits (e.g. ```Elem1<Self>```, ```Elem2<Option<T>>```)
 
 ### Purpose
 
