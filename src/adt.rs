@@ -597,6 +597,15 @@ mod tests {
     }
 
     #[test]
+    fn element_self() {
+        let input = quote! { Self };
+
+        let r = syn::parse2::<ElementType>(input);
+
+        assert!(r.is_err())
+    }
+
+    #[test]
     fn element_generics_typeparam_self() {
         let input = quote! { Elem1<Self> };
 
