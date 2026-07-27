@@ -597,6 +597,33 @@ mod tests {
     }
 
     #[test]
+    fn element_generics_typeparam_self() {
+        let input = quote! { Elem1<Self> };
+
+        let r = syn::parse2::<ElementType>(input);
+
+        assert!(r.is_err())
+    }
+
+    #[test]
+    fn element_generics_typeparam_container() {
+        let input = quote! { Elem1<Option<A>> };
+
+        let r = syn::parse2::<ElementType>(input);
+
+        assert!(r.is_err())
+    }
+
+    #[test]
+    fn element_generics_typeparam_lifetime() {
+        let input = quote! { Elem1<'a T> };
+
+        let r = syn::parse2::<ElementType>(input);
+
+        assert!(r.is_err())
+    }
+
+    #[test]
     fn single_type() {
         let input = quote! { Data = Data1 };
 
