@@ -237,33 +237,9 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
     let mut elements_def = TokenStream::new();
     let mut from_impls = TokenStream::new();
 
-    let mut enum_typeparam = None;
-
-    if let Some(g) = &generics {
-        let el_typeparam = g.type_params().fold(TokenStream::new(), |acc, x| {
-            let gty = &x.ident;
-
-            for el in &elements {
-                if let Some(t) = &el.type_param {
-                    for p in &t.params {
-                        if gty == p {
-                            if acc.is_empty() {
-                                return quote! { #p };
-                            } else {
-                                return quote! { #acc, #p };
-                            }
-                        }
-                    }
-                }
-            }
-
-            acc
-        });
-
-        if el_typeparam.is_empty().not() {
-            enum_typeparam = Some(quote! { < #el_typeparam > });
-        }
-    }
+    let enum_typeparam = generics
+        .as_ref()
+        .and_then(|x| extract_type_params_for_elements(x, &elements));
 
     for x in &elements {
         let enum_element = to_element_name(&x.ident);
@@ -296,19 +272,17 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         };
     }
 
-    let derive_gen = derive_def.map(|x| derive_generate(x)).unwrap_or_default();
+    let derive_gen = derive_def.map(|x| derive_generate(x));
 
-    let trait_gen = trait_def
-        .map(|x| {
-            trait_generate(
-                &ident,
-                enum_typeparam.clone(),
-                generics.clone(),
-                &elements,
-                x,
-            )
-        })
-        .unwrap_or_default();
+    let trait_gen = trait_def.map(|x| {
+        trait_generate(
+            &ident,
+            enum_typeparam.clone(),
+            generics.clone(),
+            &elements,
+            x,
+        )
+    });
 
     Ok(quote! {
         #derive_gen
@@ -319,6 +293,37 @@ pub fn adt_generate(input: TokenStream) -> Result<TokenStream> {
         #trait_gen
         #from_impls
     })
+}
+
+fn extract_type_params_for_elements(
+    generics: &Generics,
+    elements: &Vec<ElementType>,
+) -> Option<TokenStream> {
+    let res = generics.type_params().fold(TokenStream::new(), |acc, x| {
+        let gty = &x.ident;
+
+        for el in elements {
+            if let Some(t) = &el.type_param {
+                for p in &t.params {
+                    if gty == p {
+                        if acc.is_empty() {
+                            return quote! { #p };
+                        } else {
+                            return quote! { #acc, #p };
+                        }
+                    }
+                }
+            }
+        }
+
+        acc
+    });
+
+    if res.is_empty() {
+        None
+    } else {
+        Some(quote! { < #res > })
+    }
 }
 
 fn parse_punct_idents(input: &ParseStream) -> Result<Punctuated<Ident, Token![,]>> {
@@ -447,11 +452,7 @@ fn trait_generate(
     let trait_name = tt.ident;
     let trait_typeparam = tt.type_param;
 
-    let type_hint = if let Some(t) = &trait_typeparam {
-        quote! { ::#t }
-    } else {
-        TokenStream::new()
-    };
+    let type_hint = trait_typeparam.as_ref().map(|x| quote! { ::#x });
 
     let mut trait_func = TokenStream::new();
     let mut trait_impl = TokenStream::new();
