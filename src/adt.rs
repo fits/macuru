@@ -2203,4 +2203,80 @@ mod tests {
             assert!(false)
         }
     }
+
+    #[test]
+    fn adt_generate_with_generics_type_bounds() {
+        let input = quote! {
+            Data<V: Copy> = Elem1<V> | Elem2<V> derive Clone with DataFunc<V> {
+                fn values(&self) -> Vec<V>;
+            }
+        };
+
+        let r = adt_generate(input);
+
+        if let Ok(t) = r {
+            assert_eq!(
+                quote! {
+                    #[derive(Clone)]
+                    pub enum Data<V> {
+                        Elem1_(Elem1<V>),
+                        Elem2_(Elem2<V>),
+                    }
+
+                    pub trait DataFunc<V> {
+                        fn values(&self) -> Vec<V>;
+                    }
+
+                    impl<V: Copy> DataFunc<V> for Data<V> {
+                        fn values(&self) -> Vec<V> {
+                            match self {
+                                Self::Elem1_(x__) => DataFunc::<V>::values(x__),
+                                Self::Elem2_(x__) => DataFunc::<V>::values(x__),
+                            }
+                        }
+                    }
+
+                    impl<V> From< Elem1<V> > for Data<V> {
+                        fn from(v: Elem1<V>) -> Self {
+                            Self::Elem1_(v)
+                        }
+                    }
+
+                    impl<V> TryFrom< Data<V> > for Elem1<V> {
+                        type Error = ();
+
+                        fn try_from(v: Data<V>) -> Result<Self, Self::Error> {
+                            if let Data::Elem1_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+
+                    impl<V> From< Elem2<V> > for Data<V> {
+                        fn from(v: Elem2<V>) -> Self {
+                            Self::Elem2_(v)
+                        }
+                    }
+
+                    impl<V> TryFrom< Data<V> > for Elem2<V> {
+                        type Error = ();
+
+                        fn try_from(v: Data<V>) -> Result<Self, Self::Error> {
+                            if let Data::Elem2_(x) = v {
+                                Ok(x)
+                            } else {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+                .to_string(),
+                t.to_string()
+            );
+        } else {
+            assert!(false)
+        }
+    }
 }
