@@ -22,3 +22,7 @@ path = "src/example2.rs"
 [[bin]]
 name = "example3"
 path = "src/example3.rs"
+
+[[bin]]
+name = "example4"
+path = "src/example4.rs"
