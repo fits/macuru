@@ -53,7 +53,8 @@ impl DataFunc for Empty {
 * トレイト定義とenum型の実装
     * 関数の戻り値に含まれる```Self```をenum型へ変更
 * ジェネリクスの調整
-    * enumのジェネリスク定義を要素型で使用するものに限定
+    * enumのジェネリスク定義は要素型が使用しているものだけに限定
+    * ジェネリック境界やwhere句は指定したトレイトの実装箇所にのみ適用
 
 ```rust
 adt!(
@@ -355,6 +356,58 @@ impl<A> DataFunc<A> for Data {
 }
 ...
 ```
+
+### 例6
+
+```rust
+adt!(
+    Data<V: Copy> = Elem1<V> | Elem2<V> with DataFunc<V> {
+        fn values(&self) -> Vec<V>;
+    }
+);
+```
+
+#### マクロ適用結果
+
+```rust
+pub enum Data<V> {
+    Elem1_(Elem1<V>),
+    Elem2_(Elem2<V>),
+}
+
+pub trait DataFunc<V> {
+    fn values(&self) -> Vec<V>;
+}
+
+impl<V: Copy> DataFunc<V> for Data<V> {
+    fn values(&self) -> Vec<V> {
+        match self {
+            Self::Elem1_(x__) => DataFunc::<V>::values(x__),
+            Self::Elem2_(x__) => DataFunc::<V>::values(x__),
+        }
+    }
+}
+
+impl<V> From< Elem1<V> > for Data<V> {
+    fn from(v: Elem1<V>) -> Self {
+        Self::Elem1_(v)
+    }
+}
+
+impl<V> TryFrom< Data<V> > for Elem1<V> {
+    type Error = ();
+
+    fn try_from(v: Data<V>) -> Result<Self, Self::Error> {
+        if let Data::Elem1_(x) = v {
+            Ok(x)
+        } else {
+            Err(())
+        }
+    }
+}
+...
+```
+
 
 ## ライセンス
 
