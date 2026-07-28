@@ -1,6 +1,6 @@
 [package]
 name = "macuru-example"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 default-run = "main"
 
@@ -18,3 +18,11 @@ path = "src/example1.rs"
 [[bin]]
 name = "example2"
 path = "src/example2.rs"
+
+[[bin]]
+name = "example3"
+path = "src/example3.rs"
+
+[[bin]]
+name = "example4"
+path = "src/example4.rs"
