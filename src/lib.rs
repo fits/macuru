@@ -1,21 +1,56 @@
-use proc_macro::TokenStream;
+pub use macuru_macros::*;
 
-mod adt;
-mod mdo;
+pub trait MonadLike<A> {
+    type Target<B>: MonadLike<B>;
 
-use adt::adt_generate;
-use mdo::mdo_generate;
+    fn unit(value: A) -> Self;
 
-#[proc_macro]
-pub fn adt(input: TokenStream) -> TokenStream {
-    adt_generate(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>;
 }
 
-#[proc_macro]
-pub fn mdo(input: TokenStream) -> TokenStream {
-    mdo_generate(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+impl<A> MonadLike<A> for Option<A> {
+    type Target<B> = Option<B>;
+
+    fn unit(value: A) -> Self {
+        Some(value)
+    }
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>,
+    {
+        self.and_then(f)
+    }
+}
+
+impl<A, E> MonadLike<A> for std::result::Result<A, E> {
+    type Target<B> = std::result::Result<B, E>;
+
+    fn unit(value: A) -> Self {
+        Ok(value)
+    }
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>,
+    {
+        self.and_then(f)
+    }
+}
+
+impl<A> MonadLike<A> for Vec<A> {
+    type Target<B> = Vec<B>;
+
+    fn unit(value: A) -> Self {
+        vec![value]
+    }
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>,
+    {
+        self.into_iter().flat_map(f).collect()
+    }
 }
