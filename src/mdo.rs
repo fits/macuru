@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     Error, Expr, Ident, Token,
     parse::{Parse, ParseStream, Result},
@@ -8,7 +8,22 @@ use syn::{
 use std::ops::Not;
 
 pub fn mdo_generate(input: TokenStream) -> Result<TokenStream> {
-    Ok(quote! {})
+    let MdoBlock { stmts } = syn::parse2::<MdoBlock>(input)?;
+
+    let mut body = TokenStream::new();
+
+    for s in stmts.into_iter().rev() {
+        body = match s {
+            MdoStmt::Bind(MdoBind { var, expr }) => {
+                let v = var.map(|x| x.to_token_stream()).unwrap_or(quote! { _ });
+
+                quote! { (#expr).bind(|#v| #body) }
+            }
+            MdoStmt::Yield(MdoYield { expr }) => quote! { MonadLike::unit(#expr) #body },
+        };
+    }
+
+    Ok(body)
 }
 
 struct MdoBlock {
@@ -131,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_bind_variable_ignore() {
+    fn parse_bind_variable_underscore() {
         let input = quote! { _ <- a };
 
         if let Ok(x) = syn::parse2::<MdoBind>(input) {
@@ -246,5 +261,83 @@ mod tests {
         let r = syn::parse2::<MdoBlock>(input);
 
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn generate_single() {
+        let input = quote! {
+            x <- vec![1, 2]
+            yield x + 1
+        };
+
+        let r = mdo_generate(input);
+
+        if let Ok(x) = r {
+            assert_eq!(
+                quote! {
+                    (vec![1, 2]).bind(|x| MonadLike::unit(x + 1))
+                }
+                .to_string(),
+                x.to_string()
+            );
+        } else {
+            assert!(false, "generate error")
+        }
+    }
+
+    #[test]
+    fn generate_nest() {
+        let input = quote! {
+            x <- vec![1, 2]
+            y <- vec!["a", "b", "c"]
+            z <- vec![true, false]
+            yield (x * 2, y, z)
+        };
+
+        let r = mdo_generate(input);
+
+        if let Ok(x) = r {
+            assert_eq!(
+                quote! {
+                    (vec![1, 2]).bind(|x|
+                        (vec!["a", "b", "c"]).bind(|y|
+                            (vec![true, false]).bind(|z| MonadLike::unit((x * 2, y, z)))
+                        )
+                    )
+                }
+                .to_string(),
+                x.to_string()
+            );
+        } else {
+            assert!(false, "generate error")
+        }
+    }
+
+    #[test]
+    fn generate_nest_underscore() {
+        let input = quote! {
+            x <- vec![1, 2]
+            _ <- vec!["a", "b", "c"]
+            z <- vec![true, false]
+            yield (x * 2, z)
+        };
+
+        let r = mdo_generate(input);
+
+        if let Ok(x) = r {
+            assert_eq!(
+                quote! {
+                    (vec![1, 2]).bind(|x|
+                        (vec!["a", "b", "c"]).bind(|_|
+                            (vec![true, false]).bind(|z| MonadLike::unit((x * 2, z)))
+                        )
+                    )
+                }
+                .to_string(),
+                x.to_string()
+            );
+        } else {
+            assert!(false, "generate error")
+        }
     }
 }
