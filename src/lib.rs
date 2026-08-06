@@ -8,6 +8,14 @@ pub trait MonadLike<A> {
     fn bind<F, B>(self, f: F) -> Self::Target<B>
     where
         F: Fn(A) -> Self::Target<B>;
+
+    fn filter<P>(self, _pred: P) -> Self
+    where
+        Self: Sized,
+        P: Fn(&A) -> bool,
+    {
+        self
+    }
 }
 
 impl<A> MonadLike<A> for Option<A> {
@@ -22,6 +30,13 @@ impl<A> MonadLike<A> for Option<A> {
         F: Fn(A) -> Self::Target<B>,
     {
         self.and_then(f)
+    }
+
+    fn filter<P>(self, pred: P) -> Self
+    where
+        P: Fn(&A) -> bool,
+    {
+        self.filter(pred)
     }
 }
 
@@ -52,5 +67,12 @@ impl<A> MonadLike<A> for Vec<A> {
         F: Fn(A) -> Self::Target<B>,
     {
         self.into_iter().flat_map(f).collect()
+    }
+
+    fn filter<P>(self, pred: P) -> Self
+    where
+        P: Fn(&A) -> bool,
+    {
+        self.into_iter().filter(pred).collect()
     }
 }

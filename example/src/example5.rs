@@ -49,5 +49,13 @@ fn main() -> Result<(), ()> {
 
     println!("d5 = {:?}", d5);
 
+    let d6 = mdo!(
+        a <- Vec::from_iter(0..10) where a % 2 == 0
+        b <- vec!["aaa", "bb", "c"] where b.len() <= 2
+        yield format!("{}_{}", a, b)
+    );
+
+    println!("d6 = {:?}", d6);
+
     Ok(())
 }

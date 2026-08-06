@@ -14,10 +14,12 @@ pub fn mdo_generate(input: TokenStream) -> Result<TokenStream> {
 
     for s in stmts.into_iter().rev() {
         body = match s {
-            MdoStmt::Bind(MdoBind { var, expr }) => {
+            MdoStmt::Bind(MdoBind { var, expr, cond }) => {
                 let v = var.map(|x| x.to_token_stream()).unwrap_or(quote! { _ });
 
-                quote! { (#expr).bind(|#v| #body) }
+                let filter = cond.map(|x| quote! { .filter(|#v| #x) });
+
+                quote! { (#expr)#filter.bind(|#v| #body) }
             }
             MdoStmt::Yield(MdoYield { expr }) => quote! { MonadLike::unit(#expr) #body },
         };
@@ -38,6 +40,7 @@ enum MdoStmt {
 struct MdoBind {
     var: Option<Ident>,
     expr: Expr,
+    cond: Option<Expr>,
 }
 
 struct MdoYield {
@@ -114,7 +117,14 @@ impl Parse for MdoBind {
 
         let expr = input.parse::<Expr>()?;
 
-        Ok(Self { var, expr })
+        let cond = if input.peek(Token![where]) {
+            input.parse::<Token![where]>()?;
+            Some(input.parse::<Expr>()?)
+        } else {
+            None
+        };
+
+        Ok(Self { var, expr, cond })
     }
 }
 
@@ -145,6 +155,7 @@ mod tests {
                 quote! { vec![1, 2] }.to_string(),
                 x.expr.to_token_stream().to_string()
             );
+            assert!(x.cond.is_none());
         } else {
             assert!(false, "parse error");
         }
@@ -157,6 +168,21 @@ mod tests {
         if let Ok(x) = syn::parse2::<MdoBind>(input) {
             assert_eq!("x", x.var.unwrap().to_string());
             assert_eq!("a", x.expr.to_token_stream().to_string());
+            assert!(x.cond.is_none());
+        } else {
+            assert!(false, "parse error");
+        }
+    }
+
+    #[test]
+    fn parse_bind_variable_with_cond() {
+        let input = quote! { x <- a where x > 3 };
+
+        if let Ok(x) = syn::parse2::<MdoBind>(input) {
+            assert_eq!("x", x.var.unwrap().to_string());
+            assert_eq!("a", x.expr.to_token_stream().to_string());
+            assert!(x.cond.is_some());
+            assert_eq!("x > 3", x.cond.unwrap().to_token_stream().to_string());
         } else {
             assert!(false, "parse error");
         }
@@ -307,6 +333,28 @@ mod tests {
             assert_eq!(
                 quote! {
                     (vec![1, 2]).bind(|x| MonadLike::unit(x + 1))
+                }
+                .to_string(),
+                x.to_string()
+            );
+        } else {
+            assert!(false, "generate error")
+        }
+    }
+
+    #[test]
+    fn generate_single_with_cond() {
+        let input = quote! {
+            x <- a where x > 5
+            yield x * 2
+        };
+
+        let r = mdo_generate(input);
+
+        if let Ok(x) = r {
+            assert_eq!(
+                quote! {
+                    (a).filter(|x| x > 5).bind(|x| MonadLike::unit(x * 2))
                 }
                 .to_string(),
                 x.to_string()
