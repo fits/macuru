@@ -44,6 +44,29 @@ struct MdoYield {
     expr: Expr,
 }
 
+impl MdoBlock {
+    fn create<F>(stmts: Vec<MdoStmt>, err: F) -> Result<Self>
+    where
+        F: Fn(&str) -> Result<Self>,
+    {
+        if stmts.is_empty() {
+            err("empty block")?;
+        }
+
+        if let Some(x) = stmts.last()
+            && x.is_yield().not()
+        {
+            err("must end with a yield")?;
+        }
+
+        if stmts.iter().filter(|x| x.is_yield()).count() > 1 {
+            err("yield must be only one")?;
+        }
+
+        Ok(Self { stmts })
+    }
+}
+
 impl Parse for MdoBlock {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut stmts = Vec::new();
@@ -52,15 +75,9 @@ impl Parse for MdoBlock {
             stmts.push(input.parse::<MdoStmt>()?);
         }
 
-        if stmts.is_empty() {
-            return Err(Error::new(input.span(), "empty block"));
-        } else if let Some(x) = stmts.last()
-            && x.is_yield().not()
-        {
-            return Err(Error::new(input.span(), "must end with a yield"));
-        }
+        let err_gen = |s: &str| -> Result<Self> { Err(Error::new(input.span(), s)) };
 
-        Ok(Self { stmts })
+        MdoBlock::create(stmts, err_gen)
     }
 }
 
@@ -256,6 +273,20 @@ mod tests {
             x <- a
             yield (x, 1)
             y <- b
+        };
+
+        let r = syn::parse2::<MdoBlock>(input);
+
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn parse_block_with_multi_yield() {
+        let input = quote! {
+            x <- a
+            yield (x, 1)
+            y <- b
+            yield y + 1
         };
 
         let r = syn::parse2::<MdoBlock>(input);
