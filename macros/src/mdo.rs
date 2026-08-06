@@ -371,4 +371,39 @@ mod tests {
             assert!(false, "generate error")
         }
     }
+
+    #[test]
+    fn generate_nest_macro() {
+        let input = quote! {
+            x <- vec![1, 2]
+            y <- mdo!(
+                a <- vec!["a", "b"]
+                b <- vec![true, false]
+                yield (a, b)
+            )
+            yield (x * 2, y)
+        };
+
+        let r = mdo_generate(input);
+
+        if let Ok(x) = r {
+            assert_eq!(
+                quote! {
+                    (vec![1, 2]).bind(|x|
+                        (mdo!(
+                            a <- vec!["a", "b"]
+                            b <- vec![true, false]
+                            yield (a, b)
+                        )).bind(|y|
+                            MonadLike::unit((x * 2, y))
+                        )
+                    )
+                }
+                .to_string(),
+                x.to_string()
+            );
+        } else {
+            assert!(false, "generate error")
+        }
+    }
 }

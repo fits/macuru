@@ -37,5 +37,17 @@ fn main() -> Result<(), ()> {
 
     println!("d4 = {:?}", d4);
 
+    let d5 = mdo!(
+        a <- vec![1, 5]
+        b <- mdo!(
+            x <- vec!["a", "d"]
+            y <- vec![true, false]
+            yield (x, y)
+        )
+        yield (a + 10, b)
+    );
+
+    println!("d5 = {:?}", d5);
+
     Ok(())
 }
