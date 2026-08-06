@@ -6,6 +6,13 @@
 
 主な目的は、ボイラープレートを排除して開発体験を改善する事です。
 
+## 機能
+
+|マクロ|概要|
+|---|---|
+|[adt](#adt-algebraic-data-type-マクロ)|enumでADT（sum type）を定義した際に生じるボイラープレートを排除するためのマクロ|
+|[mdo](#mdoマクロ)|Haskellのdo記法やScalaのfor内包表記のようなモナド内包表記を実現するためのマクロ|
+
 ## 使い方
 
 ```toml
@@ -13,7 +20,7 @@
 macuru = { git = "https://github.com/fits/macuru" }
 ```
 
-```adt!```マクロがenum定義などのボイラープレートコードを生成するので必要な箇所を実装します。
+```adt```マクロがenum定義などのボイラープレートコードを生成するので必要な箇所を実装します。
 
 ```rust
 use macuru::adt;
@@ -43,9 +50,26 @@ impl DataFunc for Empty {
 ...
 ```
 
+```mdo```マクロはモナドの内包表記を実現します。
+
+```rust
+use macuru::{MonadLike, mdo};
+
+fn main() -> Result<(), ()> {
+    let v = vec![0, 1, 2, 3, 5, 7];
+
+    let d = mdo!(
+        x <- vec!["a", "b"]
+        y <- v.clone() where y > 2
+        yield (x, y * 2)
+    );
+    ...
+}
+```
+
 ## ADT (Algebraic data type) マクロ
 
-```adt!``` マクロはADT（代数的データ型）の定義を補助するため以下を実施します。
+```adt```マクロはADT（代数的データ型）の定義を補助するため以下を実施します。
 
 * enum型の生成
     * 要素名は```<要素型>_```
@@ -408,6 +432,133 @@ impl<V> TryFrom< Data<V> > for Elem1<V> {
 ...
 ```
 
+## MDOマクロ
+
+```mdo```マクロは、モナドの内包表記を実現するためのもので、次の注意点があります。
+
+* ```macuru::MonadLike```トレイトを実装した型で利用可能
+    * デフォルトで```Vec<T>```, ```Option<T>```, ```Result<S,E>```に対応
+* 一般的な変数名と ```_``` のみ使用可能（パターンマッチは不可）
+* ```Result<S,E>```はフィルタリング（where）が無効
+
+```rust
+mdo!(
+    <variable> <- <expr> where <condtion>
+    ...
+    yield <result>
+);
+```
+
+```MonadLike```トレイトは次のようになっています。
+
+```rust
+pub trait MonadLike<A> {
+    type Target<B>: MonadLike<B>;
+
+    fn unit(value: A) -> Self;
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>;
+
+    fn select<P>(self, _pred: P) -> Self
+    where
+        Self: Sized,
+        P: Fn(&A) -> bool,
+    {
+        self
+    }
+}
+```
+
+例えば、Vecによる実装はこのようになっています。
+
+```rust
+impl<A> MonadLike<A> for Vec<A> {
+    type Target<B> = Vec<B>;
+
+    fn unit(value: A) -> Self {
+        vec![value]
+    }
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>,
+    {
+        self.into_iter().flat_map(f).collect()
+    }
+
+    fn select<P>(self, pred: P) -> Self
+    where
+        P: Fn(&A) -> bool,
+    {
+        self.into_iter().filter(pred).collect()
+    }
+}
+```
+
+### 目的
+
+本来の目的は、次のようなケースにおけるボイラープレートの解消であり、
+リスト内包表記よりも汎用的なモナド内包表記で実現する方法を選びました。
+
+* Vecに```flat_map```や```and_then```等が用意されていない
+* Iteratorを使うと```collect```で元の型に戻す必要が生じる
+
+そのため、モナドそのものではなく、あくまでも内包表記の実現にフォーカスした機能となっています。
+
+### 例1
+
+```rust
+mdo!(
+    x <- vec![1, 2]
+    yield x + 1
+)
+```
+
+#### マクロ適用結果
+```rust
+(vec![1, 2]).bind(|x| MonadLike::unit(x + 1))
+```
+
+### 例2
+
+```rust
+mdo!(
+    x <- a where x > 5
+    y <- b
+    yield (x, y)
+)
+```
+
+#### マクロ適用結果
+```rust
+(a).select(|x| x > 5).bind(|x| (b).bind(|y| MonadLike::unit((x, y))))
+```
+
+### 例3
+
+```rust
+mdo!(
+    a <- vec![1, 5]
+    b <- mdo!(
+        x <- vec!["a", "d"]
+        y <- vec![true, false]
+        yield (x, y)
+    )
+    yield (a, b)
+)
+```
+
+#### マクロ適用結果
+```rust
+(vec![1, 5])
+    .bind(|a|
+        (
+            (vec!["a", "b"]).bind(|x| (vec![true, false]).bind(|y| MonadLike::unit((x, y))))
+        ).bind(|b| MonadLike::unit((a, b)))
+    )
+```
 
 ## ライセンス
 
