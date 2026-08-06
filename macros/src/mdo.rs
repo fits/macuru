@@ -17,7 +17,7 @@ pub fn mdo_generate(input: TokenStream) -> Result<TokenStream> {
             MdoStmt::Bind(MdoBind { var, expr, cond }) => {
                 let v = var.map(|x| x.to_token_stream()).unwrap_or(quote! { _ });
 
-                let filter = cond.map(|x| quote! { .filter(|#v| #x) });
+                let filter = cond.map(|x| quote! { .select(|#v| #x) });
 
                 quote! { (#expr)#filter.bind(|#v| #body) }
             }
@@ -354,7 +354,7 @@ mod tests {
         if let Ok(x) = r {
             assert_eq!(
                 quote! {
-                    (a).filter(|x| x > 5).bind(|x| MonadLike::unit(x * 2))
+                    (a).select(|x| x > 5).bind(|x| MonadLike::unit(x * 2))
                 }
                 .to_string(),
                 x.to_string()

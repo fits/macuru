@@ -9,7 +9,7 @@ pub trait MonadLike<A> {
     where
         F: Fn(A) -> Self::Target<B>;
 
-    fn filter<P>(self, _pred: P) -> Self
+    fn select<P>(self, _pred: P) -> Self
     where
         Self: Sized,
         P: Fn(&A) -> bool,
@@ -32,7 +32,7 @@ impl<A> MonadLike<A> for Option<A> {
         self.and_then(f)
     }
 
-    fn filter<P>(self, pred: P) -> Self
+    fn select<P>(self, pred: P) -> Self
     where
         P: Fn(&A) -> bool,
     {
@@ -69,7 +69,7 @@ impl<A> MonadLike<A> for Vec<A> {
         self.into_iter().flat_map(f).collect()
     }
 
-    fn filter<P>(self, pred: P) -> Self
+    fn select<P>(self, pred: P) -> Self
     where
         P: Fn(&A) -> bool,
     {
