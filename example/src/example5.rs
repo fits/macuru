@@ -57,5 +57,12 @@ fn main() -> Result<(), ()> {
 
     println!("d6 = {:?}", d6);
 
+    let d7 = mdo!(
+        a <- Some(5) where a % 2 == 0
+        yield a
+    );
+
+    println!("d7 = {:?}", d7);
+
     Ok(())
 }
