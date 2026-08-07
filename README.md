@@ -6,6 +6,13 @@
 
 The primary goal is to eliminate boilerplate and improve the developer experience.
 
+## Macros
+
+|macro|note|
+|---|---|
+|[adt](#adt-algebraic-data-type-macro)|This macro eliminates the boilerplate associated with using enums in ADTs|
+|[mdo](#mdo-macro)|This macro implements monadic comprehension (such as Haskell's do-notation or Scala's for-comprehension)|
+
 ## Usage
 
 ```toml
@@ -13,7 +20,7 @@ The primary goal is to eliminate boilerplate and improve the developer experienc
 macuru = { git = "https://github.com/fits/macuru" }
 ```
 
-```adt!``` macro generates boilerplate code for ADT.
+```adt``` macro generates boilerplate code for ADT.
 
 ```rust
 use macuru::adt;
@@ -43,9 +50,26 @@ impl DataFunc for Empty {
 ...
 ```
 
+```mdo``` macro implements monadic comprehension.
+
+```rust
+use macuru::{MonadLike, mdo};
+
+fn main() -> Result<(), ()> {
+    let v = vec![0, 1, 2, 3, 5, 7];
+
+    let d = mdo!(
+        x <- vec!["a", "b"]
+        y <- v.clone() where y > 2
+        yield (x, y * 2)
+    );
+    ...
+}
+```
+
 ## ADT (Algebraic data type) Macro
 
-```adt!``` macro has the following features to assist with ADT definitions in Rust.
+```adt``` macro has the following features to assist with ADT definitions in Rust.
 
 * generate the enum type
     * element name is ```<type>_```
@@ -406,6 +430,136 @@ impl<V> TryFrom< Data<V> > for Elem1<V> {
     }
 }
 ...
+```
+
+## MDO Macro
+
+```mdo``` macro implements monadic comprehension.
+
+Please note the following points.
+
+* Available for types that implement the ```macuru::MonadLike``` trait
+    * ```Vec<T>```, ```Option<T>``` and ```Result<S,E>``` are supported by default
+* Only standard variable names and ```_``` are supported (unsupproted pattern match)
+* Filtering(where) is disabled for ```Result<S,E>```
+
+```rust
+mdo!(
+    <variable> <- <expr> where <condtion>
+    ...
+    yield <result>
+);
+```
+
+```MonadLike``` trait is defined as follows.
+
+```rust
+pub trait MonadLike<A> {
+    type Target<B>: MonadLike<B>;
+
+    fn unit(value: A) -> Self;
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>;
+
+    fn select<P>(self, _pred: P) -> Self
+    where
+        Self: Sized,
+        P: Fn(&A) -> bool,
+    {
+        self
+    }
+}
+```
+
+For example, the following implements for Vec.
+
+```rust
+impl<A> MonadLike<A> for Vec<A> {
+    type Target<B> = Vec<B>;
+
+    fn unit(value: A) -> Self {
+        vec![value]
+    }
+
+    fn bind<F, B>(self, f: F) -> Self::Target<B>
+    where
+        F: Fn(A) -> Self::Target<B>,
+    {
+        self.into_iter().flat_map(f).collect()
+    }
+
+    fn select<P>(self, pred: P) -> Self
+    where
+        P: Fn(&A) -> bool,
+    {
+        self.into_iter().filter(pred).collect()
+    }
+}
+```
+
+### Purpose
+
+The purpose was to eliminate boilerplate in the following cases.
+However, I selected monadic comprehension than list comprehension.
+
+* ```flat_map``` or ```and_then``` are not provided for Vec
+* When using ```Iterator```, it is necessary to revert to the original type using ```collect```
+
+Therefore, it does not aim to implement a monad.
+
+### Case1
+
+```rust
+mdo!(
+    x <- vec![1, 2]
+    yield x + 1
+)
+```
+
+#### Macro results
+```rust
+(vec![1, 2]).bind(|x| MonadLike::unit(x + 1))
+```
+
+### Case2
+
+```rust
+mdo!(
+    x <- a where x > 5
+    y <- b
+    yield (x, y)
+)
+```
+
+#### Macro results
+```rust
+(a).select(|x| x > 5).bind(|x| (b).bind(|y| MonadLike::unit((x, y))))
+```
+
+### Case3
+
+```rust
+mdo!(
+    a <- vec![1, 5]
+    b <- mdo!(
+        x <- vec!["a", "d"]
+        y <- vec![true, false]
+        yield (x, y)
+    )
+    yield (a, b)
+)
+```
+
+#### Macro results
+```rust
+(vec![1, 5])
+    .bind(|a|
+        (
+            (vec!["a", "b"]).bind(|x| (vec![true, false]).bind(|y| MonadLike::unit((x, y))))
+        ).bind(|b| MonadLike::unit((a, b)))
+    )
 ```
 
 ## License
