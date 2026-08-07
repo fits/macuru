@@ -440,7 +440,7 @@ impl<V> TryFrom< Data<V> > for Elem1<V> {
 * ```macuru::MonadLike```トレイトを実装した型で利用可能
     * デフォルトで```Vec<T>```, ```Option<T>```, ```Result<S,E>```に対応
 * 一般的な変数名と ```_``` のみ使用可能（パターンマッチは不可）
-* ```Result<S,E>```はフィルタリング（where）が無効
+* ```Result<S,E>```はフィルタリング（where）を無視
 
 ```rust
 mdo!(

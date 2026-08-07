@@ -441,7 +441,7 @@ Please note the following points.
 * Available for types that implement the ```macuru::MonadLike``` trait
     * ```Vec<T>```, ```Option<T>``` and ```Result<S,E>``` are supported by default
 * Only standard variable names and ```_``` are supported (unsupproted pattern match)
-* Filtering(where) is disabled for ```Result<S,E>```
+* Filtering(where) is ignored for ```Result<S,E>```
 
 ```rust
 mdo!(
