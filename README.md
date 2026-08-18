@@ -140,7 +140,7 @@ impl From<Elem1> for Data {
 impl TryFrom<Data> for Elem1 {
     type Error = ();
 
-    fn try_from(v: Data) -> Result<Self, Self::Error> {
+    fn try_from(v: Data) -> std::result::Result<Self, Self::Error> {
         if let Data::Elem1_(x) = v {
             Ok(x)
         } else {
@@ -158,7 +158,7 @@ impl From<Elem2> for Data {
 impl TryFrom<Data> for Elem2 {
     type Error = ();
 
-    fn try_from(v: Data) -> Result<Self, Self::Error> {
+    fn try_from(v: Data) -> std::result::Result<Self, Self::Error> {
         if let Data::Elem2_(x) = v {
             Ok(x)
         } else {
@@ -320,7 +320,7 @@ impl<A, B> From< Elem1<A> > for Data<A, B> {
 impl<A, B> TryFrom< Data<A, B> > for Elem1<A> {
     type Error = ();
 
-    fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+    fn try_from(v: Data<A, B>) -> std::result::Result<Self, Self::Error> {
         if let Data::Elem1_(x) = v {
             Ok(x)
         } else {
@@ -338,7 +338,7 @@ impl<A, B> From< Elem2<A, B> > for Data<A, B> {
 impl<A, B> TryFrom< Data<A, B> > for Elem2<A, B> {
     type Error = ();
 
-    fn try_from(v: Data<A, B>) -> Result<Self, Self::Error> {
+    fn try_from(v: Data<A, B>) -> std::result::Result<Self, Self::Error> {
         if let Data::Elem2_(x) = v {
             Ok(x)
         } else {
@@ -421,7 +421,7 @@ impl<V> From< Elem1<V> > for Data<V> {
 impl<V> TryFrom< Data<V> > for Elem1<V> {
     type Error = ();
 
-    fn try_from(v: Data<V>) -> Result<Self, Self::Error> {
+    fn try_from(v: Data<V>) -> std::result::Result<Self, Self::Error> {
         if let Data::Elem1_(x) = v {
             Ok(x)
         } else {
