@@ -77,7 +77,9 @@ impl ItemImpl for B {
     }
 }
 
-fn main() {
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn main() -> Result<()> {
     let d1 = Data::Elem1_(Elem1(12));
     println!("{:?}", d1);
 
@@ -103,6 +105,8 @@ fn main() {
     println!("Elem2 to Elem2 = {:?}", Elem2::try_from(d4.clone()));
 
     test_item();
+
+    Ok(())
 }
 
 fn test_item() {
